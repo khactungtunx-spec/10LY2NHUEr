@@ -1,4 +1,5 @@
 streamlit
-astropy
-matplotlib
 numpy
+pandas
+matplotlib
+astropy
