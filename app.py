@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """
 SPHEREx Sky Tracker - MVP giao diện Streamlit (NASA Space Apps)
-Cài:   pip install streamlit numpy pandas matplotlib astropy reproject scipy scikit-image
+Cài:   pip install streamlit numpy pandas matplotlib astropy reproject scipy scikit-image astroquery
 Chạy:  streamlit run app.py --theme.base dark
 Dữ liệu demo (tùy chọn): data/spherex_t1_demo.fits, data/spherex_t2_demo.fits
 """
@@ -53,6 +53,7 @@ BAND_EDGES = [(0.75, 1.095), (1.095, 1.625), (1.625, 2.415), (2.415, 3.825), (3.
 LOAI_MOVE = "Di chuyển"
 LOAI_NEW = "Nguồn mới / Sáng lên"
 LOAI_GONE = "Mờ đi / Biến mất"
+LOAI_TRAIL = "Vệt tuyến tính (nghi vệ tinh)"
 
 # Phát hiện & ghép cặp
 MIN_SHIFT_PX = 3.0    # dịch chuyển tối thiểu; nhỏ hơn = lưỡng cực của sao đứng yên
@@ -62,6 +63,49 @@ MAX_PEAKS = 400       # giới hạn số đỉnh mỗi dấu
 TOP_N = 12            # số ứng viên tối đa được vẽ trên biểu đồ
 R_DEFAULT_REAL = 45   # bán kính ghép cặp mặc định cho dữ liệu thật (pixel)
 R_DEFAULT_MOCK = 60   # ... và cho dữ liệu giả lập (vật thể mock dịch tới 51 px)
+
+# Bộ lọc hình thái học trên từng đỉnh
+PSF_MATCH_SIGMA = 0.35   # làm mượt T1 (pixel) để bù độ nhòe của T2 sau nội suy
+PATCH_HALF = 5           # hộp 11x11 quanh đỉnh
+BLOB_FRAC = 0.6          # cụm liên thông: pixel vượt 0.6 x ngưỡng phát hiện
+MIN_AREA = 3             # diện tích tối thiểu (pixel) - loại gai 1 pixel
+MAX_AXIS_RATIO = 2.4     # tỷ số trục tối đa của một nguồn điểm
+MAX_MAJOR_AXIS = 9.0     # độ dài trục lớn tối đa (pixel)
+
+# Khử chuỗi ứng viên thẳng hàng (vệt vệ tinh / persistence)
+TRAIL_MIN_N = 4          # số ứng viên tối thiểu trên một đường thẳng
+TRAIL_SPAN = 60.0        # độ trải dài tối thiểu đầu-cuối (pixel)
+TRAIL_DIST = 2.5         # khoảng cách vuông góc tối đa tới đường thẳng (pixel)
+
+# Kiểm tra bảo toàn quang thông khẩu độ cho các đỉnh đơn lẻ
+AP_HALF = 2              # hộp khẩu độ 5x5
+AP_K = 5.0               # nguồn "tồn tại rõ" khi F > 5σ ở cả hai thời điểm
+AP_TOL = 0.20            # coi là sao tĩnh nếu |F2 - F1| / max(|F1|, |F2|) < 20%
+
+# Đối chiếu danh mục SIMBAD
+SIMBAD_TOP = 15          # số ứng viên tối đa được truy vấn
+SIMBAD_RADIUS = 30.0     # bán kính tìm kiếm (arcsec)
+SIMBAD_TIMEOUT = 5       # giây
+SIMBAD_NONE = "Vật thể lạ / Chưa định danh (New Candidate)"
+SIMBAD_OFFLINE = "Lỗi kết nối SIMBAD (Offline)"
+SIMBAD_SKIPPED = "Chưa truy vấn (Ngoài top 15)"
+SIMBAD_OFF = "Chưa truy vấn (đã tắt SIMBAD)"
+SIMBAD_NO_LIB = "Chưa cài astroquery"
+SIMBAD_NA = "Không áp dụng (tọa độ không phải bầu trời thật)"
+OTYPE_LABELS = {
+    "*": "Sao", "Star": "Sao", "**": "Sao đôi", "V*": "Sao biến quang", "PM*": "Sao chuyển động riêng lớn",
+    "HPM*": "Sao chuyển động riêng lớn", "LP*": "Sao biến quang chu kỳ dài", "Mi*": "Sao biến quang kiểu Mira",
+    "RR*": "Sao biến quang RR Lyrae", "Ce*": "Sao biến quang Cepheid", "EB*": "Sao đôi che khuất",
+    "SB*": "Sao đôi quang phổ", "RG*": "Sao khổng lồ đỏ", "AB*": "Sao nhánh tiệm cận", "C*": "Sao carbon",
+    "WD*": "Sao lùn trắng", "BD*": "Sao lùn nâu", "LM*": "Sao khối lượng thấp", "Y*O": "Thiên thể sao trẻ",
+    "TT*": "Sao T Tauri", "Em*": "Sao vạch phát xạ", "G": "Thiên hà", "GiG": "Thiên hà trong nhóm",
+    "GiC": "Thiên hà trong cụm", "GiP": "Thiên hà trong cặp", "LSB": "Thiên hà độ sáng bề mặt thấp",
+    "AGN": "Nhân thiên hà hoạt động", "QSO": "Nhân thiên hà hoạt động", "Sy1": "Nhân thiên hà hoạt động",
+    "Sy2": "Nhân thiên hà hoạt động", "SyG": "Nhân thiên hà hoạt động", "BLL": "Nhân thiên hà hoạt động",
+    "IR": "Nguồn hồng ngoại", "NIR": "Nguồn hồng ngoại", "MIR": "Nguồn hồng ngoại", "FIR": "Nguồn hồng ngoại",
+    "Rad": "Nguồn vô tuyến", "X": "Nguồn tia X", "UV": "Nguồn tử ngoại", "GlC": "Cụm sao cầu",
+    "OpC": "Cụm sao mở", "Cl*": "Cụm sao", "PN": "Tinh vân hành tinh", "HII": "Vùng HII", "SNR": "Tàn dư siêu tân tinh",
+}
 
 # Căn chỉnh dưới pixel (tương quan pha)
 REG_CROP = 0.10       # bỏ 10% viền mỗi cạnh khi đo
@@ -593,6 +637,14 @@ def prepare_real(raw1, raw2, tru_zodi, loc_flags, cube_index=0):
         if valid.sum() < 100:
             raise ValueError("Gần như không còn pixel hợp lệ sau khi gọt biên và che hào quang sao sáng.")
         info["valid_pct"] = float(valid.mean() * 100)
+
+        # ---- 3d. Khớp PSF cực nhẹ cho T1: bù độ suy giảm đỉnh của T2 sau khi nội suy ----
+        info["psf_match"] = False
+        if ndimage is not None and PSF_MATCH_SIGMA > 0 and info["wcs"] == "ok":
+            t1_filled = np.where(ok1, t1, med1)                 # điền nền để NaN không loang khi lọc
+            t1 = ndimage.gaussian_filter(t1_filled, sigma=PSF_MATCH_SIGMA)
+            t1[~ok1] = np.nan                                   # trả lại NaN cho mọi pixel vốn không hợp lệ
+            info["psf_match"] = True
         return t1 - med1, t2 - med2, valid, info, (a["header"] if wcs1 is not None else None)
 
 
@@ -610,15 +662,62 @@ def _max_filter(v, size):
         return np.lib.stride_tricks.sliding_window_view(p, (size, size)).max(axis=(2, 3))
 
 
+def _cum_lien_thong(mask, cy, cx):
+    """Cụm pixel liên thông (8 hướng) chứa pixel (cy, cx) trong một hộp nhỏ."""
+    blob = np.zeros_like(mask)
+    if not mask[cy, cx]:
+        return blob
+    h, w = mask.shape
+    stack = [(cy, cx)]
+    blob[cy, cx] = True
+    while stack:
+        y, x = stack.pop()
+        for ny in range(max(y - 1, 0), min(y + 2, h)):
+            for nx in range(max(x - 1, 0), min(x + 2, w)):
+                if mask[ny, nx] and not blob[ny, nx]:
+                    blob[ny, nx] = True
+                    stack.append((ny, nx))
+    return blob
+
+
 def _find_peaks(v, nguong):
-    """Cực trị cục bộ của v vượt ngưỡng (cửa sổ PEAK_WIN để khử đỉnh kề nhau),
-    kèm tâm trọng lượng quang thông trong hộp 3x3 quanh mỗi đỉnh."""
+    """Cực trị cục bộ của v vượt ngưỡng (cửa sổ PEAK_WIN để khử đỉnh kề nhau), lọc theo hình thái:
+    diện tích cụm >= MIN_AREA và dạng tròn như PSF. Tâm lấy theo trọng lượng quang thông hộp 3x3.
+    Trả về: danh sách đỉnh, số gai bị loại (diện tích nhỏ), số đốm dẹt / kéo dài bị loại."""
     la_dinh = (v == _max_filter(v, PEAK_WIN)) & (v > nguong)
     if la_dinh.sum() > 50_000:
         raise ValueError("Quá nhiều đỉnh vượt ngưỡng - hai ảnh có thể chưa được căn chỉnh, hãy tăng ngưỡng σ.")
     h, w = v.shape
-    peaks = []
+    peaks, n_gai, n_det = [], 0, 0
     for y0, x0 in np.argwhere(la_dinh):
+        # Hộp 11x11 quanh đỉnh; chỉ xét phần cùng dấu với đỉnh (v đã được đổi dấu cho đỉnh âm)
+        pa, pb = max(y0 - PATCH_HALF, 0), min(y0 + PATCH_HALF + 1, h)
+        qa, qb = max(x0 - PATCH_HALF, 0), min(x0 + PATCH_HALF + 1, w)
+        patch = v[pa:pb, qa:qb]
+        blob = _cum_lien_thong(patch > BLOB_FRAC * nguong, y0 - pa, x0 - qa)
+        if blob.sum() < MIN_AREA:
+            n_gai += 1
+            continue
+        by, bx = np.nonzero(blob)
+        wgt = np.maximum(patch[blob], 0.0)
+        sw = float(wgt.sum())
+        if sw <= 0:
+            n_gai += 1
+            continue
+        xc, yc = float((wgt * bx).sum() / sw), float((wgt * by).sum() / sw)
+        # Mô-men bậc 2 theo trọng số cường độ; cộng 1/12 là mô-men của chính một pixel vuông
+        mu20 = float((wgt * (bx - xc) ** 2).sum() / sw) + 1.0 / 12.0
+        mu02 = float((wgt * (by - yc) ** 2).sum() / sw) + 1.0 / 12.0
+        mu11 = float((wgt * (bx - xc) * (by - yc)).sum() / sw)
+        common = float(np.sqrt(max(((mu20 - mu02) / 2.0) ** 2 + mu11 ** 2, 0.0)))
+        lambda_max = max((mu20 + mu02) / 2.0 + common, 1e-6)
+        lambda_min = max((mu20 + mu02) / 2.0 - common, 1e-6)
+        axis_ratio = float(np.sqrt(lambda_max / lambda_min))
+        major_axis = 4.0 * float(np.sqrt(lambda_max))
+        if axis_ratio > MAX_AXIS_RATIO or major_axis > MAX_MAJOR_AXIS:
+            n_det += 1  # vệt vệ tinh hoặc gai nhiễu xạ
+            continue
+
         ya, yb, xa, xb = max(y0 - 1, 0), min(y0 + 2, h), max(x0 - 1, 0), min(x0 + 2, w)
         hop = np.clip(v[ya:yb, xa:xb], 0.0, None)
         tong = float(hop.sum())
@@ -626,30 +725,66 @@ def _find_peaks(v, nguong):
             continue
         ys, xs = np.mgrid[ya:yb, xa:xb]
         peaks.append({"y": float((ys * hop).sum() / tong), "x": float((xs * hop).sum() / tong),
-                      "flux": tong, "peak": float(v[y0, x0])})
+                      "flux": tong, "peak": float(v[y0, x0]), "iy": int(y0), "ix": int(x0)})
     peaks.sort(key=lambda p: -p["peak"])
-    return peaks[:MAX_PEAKS]
+    return peaks[:MAX_PEAKS], n_gai, n_det
+
+
+def find_trails(points):
+    """Đánh dấu các điểm nằm trên một chuỗi thẳng hàng: >= TRAIL_MIN_N điểm cách đường thẳng
+    < TRAIL_DIST px và trải dài > TRAIL_SPAN px. Đường thẳng khớp bằng SVD nên đúng với mọi góc nghiêng."""
+    P = np.asarray(points, dtype=float).reshape(-1, 2)
+    n = len(P)
+    flagged = np.zeros(n, dtype=bool)
+    if n < TRAIL_MIN_N:
+        return flagged
+    n_seed = min(n, 200)  # giới hạn số cặp điểm dùng làm giả thuyết đường thẳng
+    for i in range(n_seed - 1):
+        for j in range(i + 1, n_seed):
+            dvec = P[j] - P[i]
+            dai = float(np.hypot(dvec[0], dvec[1]))
+            if dai < 1e-6:
+                continue
+            phap_tuyen = np.array([-dvec[1], dvec[0]]) / dai
+            gan = np.abs((P - P[i]) @ phap_tuyen) < TRAIL_DIST
+            if gan.sum() < TRAIL_MIN_N:
+                continue
+            tam = P[gan].mean(axis=0)
+            _, _, vt = np.linalg.svd(P[gan] - tam, full_matrices=False)
+            huong, phap_tuyen = vt[0], vt[-1]       # vector kỳ dị nhỏ nhất = pháp tuyến đường thẳng
+            thuoc = np.abs((P - tam) @ phap_tuyen) < TRAIL_DIST
+            if thuoc.sum() < TRAIL_MIN_N:
+                continue
+            chieu = (P[thuoc] - tam) @ huong
+            if float(chieu.max() - chieu.min()) > TRAIL_SPAN:
+                flagged |= thuoc
+    return flagged
 
 
 @st.cache_data(show_spinner=False)
 def detect(img_t1, img_t2, k_sigma, r_max, valid=None, min_shift_px=MIN_SHIFT_PX):
-    """Trừ ảnh (chỉ trên vùng hợp lệ) -> đo nhiễu (cắt 3σ) -> dò cực trị cục bộ + định tâm dưới pixel
-    -> loại lưỡng cực sao tĩnh -> ghép cặp đỉnh âm (T1) với đỉnh dương (T2).
-    Trả về: ảnh trừ, sigma, danh sách ứng viên, số lưỡng cực đã loại."""
+    """Trừ ảnh (chỉ trên vùng hợp lệ) -> đo nhiễu (cắt 3σ) -> dò cực trị cục bộ + lọc hình thái
+    -> loại lưỡng cực sao tĩnh -> ghép cặp đỉnh âm (T1) với đỉnh dương (T2) -> khử chuỗi thẳng hàng
+    -> kiểm tra bảo toàn quang thông khẩu độ cho các đỉnh đơn lẻ.
+    Trả về: ảnh trừ, sigma, danh sách ứng viên, thống kê các bộ lọc."""
+    stats = {"dipole": 0, "spike": 0, "elong": 0, "trail": 0, "veto": 0}
+    t1 = np.asarray(img_t1, dtype=float)
+    t2 = np.asarray(img_t2, dtype=float)
     with np.errstate(all="ignore"):
-        diff = np.asarray(img_t2, dtype=float) - np.asarray(img_t1, dtype=float)
+        diff = t2 - t1
     if valid is None:
         valid = np.isfinite(diff)
     valid = valid & np.isfinite(diff)
     diff = np.where(valid, diff, np.nan)
     if not valid.any():
-        return diff, 1.0, [], 0
+        return diff, 1.0, [], stats
 
     diff_med, diff_sigma = clipped_stats(diff[valid])
     d = np.where(valid, diff - diff_med, 0.0)  # pixel không hợp lệ = 0 nên không bao giờ vượt ngưỡng
 
-    neg = _find_peaks(-d, k_sigma * diff_sigma)  # vật thể có ở T1, mất ở T2
-    pos = _find_peaks(d, k_sigma * diff_sigma)   # vật thể mới xuất hiện ở T2
+    neg, gai_n, det_n = _find_peaks(-d, k_sigma * diff_sigma)  # vật thể có ở T1, mất ở T2
+    pos, gai_p, det_p = _find_peaks(d, k_sigma * diff_sigma)   # vật thể mới xuất hiện ở T2
+    stats["spike"], stats["elong"] = gai_n + gai_p, det_n + det_p
 
     # Mọi cặp âm-dương trong bán kính ghép cặp, sắp theo khoảng cách tăng dần (gần nhất ghép trước)
     cap = sorted(
@@ -657,7 +792,7 @@ def detect(img_t1, img_t2, k_sigma, r_max, valid=None, min_shift_px=MIN_SHIFT_PX
         for i, n in enumerate(neg) for j, p in enumerate(pos)
         if abs(p["x"] - n["x"]) <= r_max and abs(p["y"] - n["y"]) <= r_max
     )
-    used_n, used_p, rows, n_dipole = set(), set(), [], 0
+    used_n, used_p, rows = set(), set(), []
 
     # Bước 1 - Lưỡng cực: đỉnh âm và đỉnh dương cách nhau dưới min_shift_px là dư ảnh của một
     # ngôi sao đứng yên (sai số căn chỉnh dưới pixel) -> bỏ cả hai, không coi là ứng viên.
@@ -666,7 +801,7 @@ def detect(img_t1, img_t2, k_sigma, r_max, valid=None, min_shift_px=MIN_SHIFT_PX
             break
         if i not in used_n and j not in used_p:
             used_n.add(i); used_p.add(j)
-            n_dipole += 1
+            stats["dipole"] += 1
 
     # Bước 2 - Ghép mỗi đỉnh âm với đỉnh dương gần nhất chưa ghép, thỏa điều kiện bảo toàn độ sáng
     for dist, i, j in cap:
@@ -682,16 +817,120 @@ def detect(img_t1, img_t2, k_sigma, r_max, valid=None, min_shift_px=MIN_SHIFT_PX
                      "shift_px": dist, "dflux": delta_flux_pct,
                      "snr": min(n["peak"], p["peak"]) / diff_sigma})
 
+    # Bước 3 - Chuỗi thẳng hàng: >= 4 cặp "Di chuyển" có trung điểm cùng nằm trên một đường thẳng
+    # là vệt nhiễu tuyến tính (vệ tinh / persistence), không phải nhiều thiên thể độc lập.
+    if len(rows) >= TRAIL_MIN_N:
+        rows.sort(key=lambda r: -r["snr"])
+        trung_diem = [((r["x1"] + r["x2"]) / 2.0, (r["y1"] + r["y2"]) / 2.0) for r in rows]
+        for r, la_vet in zip(rows, find_trails(trung_diem)):
+            if la_vet:
+                r["loai"] = LOAI_TRAIL
+                stats["trail"] += 1
+
+    # Bước 4 - Đỉnh đơn lẻ: bỏ nếu nguồn có mặt rõ ở cả T1 và T2 với tổng quang thông khẩu độ 5x5
+    # gần như không đổi (sao tĩnh chỉ dao động nhẹ về hình dạng PSF).
+    med1, s1 = clipped_stats(t1[valid])
+    med2, s2 = clipped_stats(t2[valid])
+    h, w = d.shape
+
+    def la_sao_tinh(pk):
+        ya, yb = max(pk["iy"] - AP_HALF, 0), min(pk["iy"] + AP_HALF + 1, h)
+        xa, xb = max(pk["ix"] - AP_HALF, 0), min(pk["ix"] + AP_HALF + 1, w)
+        b1, b2 = t1[ya:yb, xa:xb] - med1, t2[ya:yb, xa:xb] - med2
+        m = np.isfinite(b1) & np.isfinite(b2)
+        if m.sum() < 9:
+            return False
+        f1, f2 = float(b1[m].sum()), float(b2[m].sum())
+        return (f1 > AP_K * s1 and f2 > AP_K * s2
+                and abs(f2 - f1) / max(abs(f1), abs(f2), 1e-8) < AP_TOL)
+
     for j, p in enumerate(pos):
         if j not in used_p:
+            if la_sao_tinh(p):
+                stats["veto"] += 1
+                continue
             rows.append({"loai": LOAI_NEW, "x1": np.nan, "y1": np.nan, "x2": p["x"], "y2": p["y"],
                          "shift_px": 0.0, "dflux": np.nan, "snr": p["peak"] / diff_sigma})
     for i, n in enumerate(neg):
         if i not in used_n:
+            if la_sao_tinh(n):
+                stats["veto"] += 1
+                continue
             rows.append({"loai": LOAI_GONE, "x1": n["x"], "y1": n["y"], "x2": np.nan, "y2": np.nan,
                          "shift_px": 0.0, "dflux": np.nan, "snr": n["peak"] / diff_sigma})
     rows.sort(key=lambda r: -r["snr"])
-    return diff, float(diff_sigma), rows, n_dipole
+    return diff, float(diff_sigma), rows, stats
+
+
+# =============================================================================
+# 3b. ĐỐI CHIẾU DANH MỤC SIMBAD
+# =============================================================================
+def _txt(val):
+    """Giá trị ô bảng -> chuỗi sạch (giải mã bytes, bỏ giá trị bị che)."""
+    if isinstance(val, bytes):
+        val = val.decode("utf-8", errors="replace")
+    val = str(val).strip()
+    return "" if val in ("--", "None", "nan", "N/A") else val
+
+
+@st.cache_data(ttl=3600, show_spinner=False)
+def _simbad_lookup(ra_deg, dec_deg, radius_arcsec):
+    """Truy vấn SIMBAD quanh một tọa độ. Lỗi mạng được NÉM RA (không trả chuỗi) để Streamlit
+    không lưu cache một lần mất mạng suốt 1 giờ."""
+    import astropy.units as u
+    from astropy.coordinates import SkyCoord
+    from astroquery.simbad import Simbad
+
+    custom_simbad = Simbad()
+    custom_simbad.server = "simbad.harvard.edu"
+    custom_simbad.TIMEOUT = SIMBAD_TIMEOUT
+    try:
+        custom_simbad.add_votable_fields("otype")
+    except Exception:
+        pass  # một số phiên bản astroquery đặt tên trường khác; khi đó chỉ lấy tên thiên thể
+    toa_do = SkyCoord(ra=ra_deg * u.deg, dec=dec_deg * u.deg, frame="icrs")
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")  # bản cũ phát cảnh báo khi không tìm thấy gì
+        result = custom_simbad.query_region(toa_do, radius=radius_arcsec * u.arcsec)
+    if result is None or len(result) == 0:
+        return SIMBAD_NONE
+
+    cols = {c.lower(): c for c in result.colnames}  # bản mới: 'main_id'; bản cũ: 'MAIN_ID'
+    k = 0
+    try:  # nếu bảng có ra/dec dạng số (độ) thì chọn thiên thể gần tâm tìm kiếm nhất
+        ra = np.asarray(result[cols["ra"]], dtype=float)
+        dec = np.asarray(result[cols["dec"]], dtype=float)
+        lech = np.hypot((ra - ra_deg) * np.cos(np.radians(dec_deg)), dec - dec_deg)
+        if np.isfinite(lech).any():
+            k = int(np.nanargmin(lech))
+    except Exception:
+        k = 0
+    main_id = _txt(result[cols["main_id"]][k]) if "main_id" in cols else ""
+    otype = _txt(result[cols["otype"]][k]) if "otype" in cols else ""
+    nhan = OTYPE_LABELS.get(otype, otype if otype else "chưa rõ loại")
+    return f'{main_id or "Không rõ tên"} ({nhan})'
+
+
+def query_simbad_catalog(ra_deg: float, dec_deg: float, radius_arcsec: float = SIMBAD_RADIUS) -> str:
+    """Tên + phân loại SIMBAD của thiên thể gần tọa độ nhất. Không bao giờ làm sập ứng dụng."""
+    try:
+        return _simbad_lookup(round(float(ra_deg), 3), round(float(dec_deg), 5), float(radius_arcsec))
+    except ImportError:
+        return SIMBAD_NO_LIB
+    except Exception:
+        return SIMBAD_OFFLINE
+
+
+def simbad_ngan(text):
+    """Nhãn rút gọn để ghi trên biểu đồ."""
+    if text == SIMBAD_NONE:
+        return "Chưa định danh"
+    if text == SIMBAD_OFFLINE:
+        return "SIMBAD offline"
+    if text in (SIMBAD_SKIPPED, SIMBAD_OFF, SIMBAD_NO_LIB, SIMBAD_NA):
+        return ""
+    ten = text.split(" (")[0]
+    return ten if len(ten) <= 18 else ten[:17] + "…"
 
 
 def sep_pa(ra1, dec1, ra2, dec2):
@@ -772,12 +1011,12 @@ with st.sidebar:
         st.caption(f'FITS cube {meta["n_planes"]} kênh: band được chọn quyết định lát cắt đem phân tích.')
     cube_index = BANDS.index(dai_pho) if la_cube else 0
 
-    # Mặc định cho dữ liệu SPHEREx thật có sẵn: 8σ; còn lại: 5σ
-    mac_dinh_that = che_do == SRC_DEMO and co_demo
-    nguong_sigma = st.slider("Ngưỡng lọc nhiễu (σ)", 1.0, 10.0, 8.0 if mac_dinh_that else 5.0, 0.5,
+    # Mặc định cho dữ liệu SPHEREx thật: 9σ; dữ liệu giả lập: 5σ
+    mac_dinh_that = bool(meta)
+    nguong_sigma = st.slider("Ngưỡng lọc nhiễu (σ)", 1.0, 10.0, 9.0 if mac_dinh_that else 5.0, 0.5,
                              help="Chỉ giữ các đỉnh trên ảnh trừ sáng hơn k lần độ nhiễu nền")
     st.caption("Ngưỡng thấp → bắt được vật thể mờ nhưng nhiều báo động giả. "
-               "Mặc định 8σ cho dữ liệu thật, 5σ cho dữ liệu giả lập.")
+               "Mặc định 9σ cho dữ liệu thật, 5σ cho dữ liệu giả lập.")
 
     # Bán kính ghép cặp: 10-80 px; mặc định 45 px cho dữ liệu thật, 60 px cho mock (ảnh mock dịch tới 51 px)
     kieu = "that" if meta else "mock"
@@ -790,6 +1029,12 @@ with st.sidebar:
                          10, 80, step=5, key="max_radius",
                          help="Một đỉnh ở T1 chỉ được ghép với đỉnh ở T2 nằm trong bán kính này "
                               f"(và cách tối thiểu {MIN_SHIFT_PX:g} px)")
+
+    st.divider()
+    st.subheader("🔭 Đối chiếu danh mục")
+    dung_simbad = st.checkbox("Định danh tọa độ (RA, Dec) qua kho sao SIMBAD", value=False,
+                              help=f"Tra {SIMBAD_TOP} ứng viên tin cậy nhất trong bán kính {SIMBAD_RADIUS:g}″. "
+                                   "Cần kết nối Internet; chỉ áp dụng cho dữ liệu thật có WCS.")
 
 # =============================================================================
 # 5. NẠP DỮ LIỆU & CHẠY PHÁT HIỆN
@@ -823,7 +1068,7 @@ else:
     dt_hours, dt_la_gia_dinh = info["dt_hours"], info["dt_src"] != "header"
 
 try:
-    diff, sigma, cands, n_dipole = detect(img1, img2, float(nguong_sigma), float(ban_kinh), valid)
+    diff, sigma, cands, loc = detect(img1, img2, float(nguong_sigma), float(ban_kinh), valid)
 except ValueError as e:
     st.error(str(e))
     st.stop()
@@ -848,15 +1093,40 @@ for i, c in enumerate(cands, 1):
         c["ra1"], c["dec1"] = pix2sky(c["x1"], c["y1"])
     if not np.isnan(c["x2"]):
         c["ra2"], c["dec2"] = pix2sky(c["x2"], c["y2"])
-    if c["loai"] == LOAI_MOVE:
+    if c["loai"] in (LOAI_MOVE, LOAI_TRAIL):
         c["sep"], c["pa"] = sep_pa(c["ra1"], c["dec1"], c["ra2"], c["dec2"])
         c["vel"] = c["sep"] / dt_hours if dt_hours > 0 else None
 
 movers = [c for c in cands if c["loai"] == LOAI_MOVE]
+don_le = [c for c in cands if c["loai"] in (LOAI_NEW, LOAI_GONE)]
 
-# Top-N để vẽ: ưu tiên vật thể "Di chuyển", còn chỗ thì thêm ứng viên khác; đều theo snr giảm dần
+# Top-N để vẽ: ưu tiên vật thể "Di chuyển", còn chỗ thì thêm đỉnh đơn lẻ; đều theo snr giảm dần
 movers_ve = movers[:TOP_N]
-cands_ve = movers_ve + [c for c in cands if c["loai"] != LOAI_MOVE][:TOP_N - len(movers_ve)]
+cands_ve = movers_ve + don_le[:TOP_N - len(movers_ve)]
+
+# Đối chiếu SIMBAD cho tối đa SIMBAD_TOP ứng viên: toàn bộ nhóm "Di chuyển" trước, rồi đỉnh đơn lẻ theo snr
+co_toa_do_that = (not dang_mock) and wcs is not None
+for c in cands:
+    c["simbad"] = SIMBAD_SKIPPED if (dung_simbad and co_toa_do_that) else (SIMBAD_NA if dung_simbad else SIMBAD_OFF)
+if dung_simbad and co_toa_do_that:
+    can_tra = (movers + don_le)[:SIMBAD_TOP]
+    if can_tra:
+        from concurrent.futures import ThreadPoolExecutor
+
+        def _tra_mot_diem(cand):
+            ra, dec = (cand["ra2"], cand["dec2"]) if cand["ra2"] is not None else (cand["ra1"], cand["dec1"])
+            return query_simbad_catalog(ra, dec, SIMBAD_RADIUS)
+
+        with st.spinner(f"Đang đối chiếu song song {len(can_tra)} ứng viên với SIMBAD..."):
+            with ThreadPoolExecutor(max_workers=8) as pool:
+                ket_qua = list(pool.map(_tra_mot_diem, can_tra))
+            for c, res in zip(can_tra, ket_qua):
+                c["simbad"] = res
+
+KHONG_KET_QUA = (SIMBAD_NONE, SIMBAD_OFFLINE, SIMBAD_SKIPPED, SIMBAD_OFF, SIMBAD_NO_LIB, SIMBAD_NA)
+n_khop = sum(c["simbad"] not in KHONG_KET_QUA for c in cands)
+n_la = sum(c["simbad"] == SIMBAD_NONE for c in cands)
+n_offline = sum(c["simbad"] == SIMBAD_OFFLINE for c in cands)
 
 
 # =============================================================================
@@ -924,9 +1194,18 @@ if info is not None:
         st.warning("Mặt nạ FLAGS đang che hơn 10% ảnh dù đã bỏ qua cờ SOURCE. "
                    "Hãy kiểm tra định nghĩa bit trong header FLAGS của file.")
 
+# Thống kê các bộ lọc nhiễu giả (mọi chế độ dữ liệu)
+psf_txt = f" · **Khớp PSF T1:** σ = {PSF_MATCH_SIGMA:g} px" if (info is not None and info.get("psf_match")) else ""
+st.caption(f'**Bộ lọc:** Đã lọc {loc["trail"]} nhiễu vệt vệ tinh (chuỗi thẳng hàng) · {loc["elong"]} đốm dẹt / kéo dài · '
+           f'{loc["spike"]} gai dưới {MIN_AREA} pixel · {loc["veto"]} sao tĩnh (bảo toàn quang thông khẩu độ) · '
+           f'{loc["dipole"]} lưỡng cực{psf_txt}')
+if dung_simbad and co_toa_do_that:
+    st.caption(f'**SIMBAD:** {n_khop} ứng viên khớp danh mục · {n_la} vật thể lạ chưa định danh'
+               + (f' · {n_offline} lỗi kết nối' if n_offline else ''))
+
 m1, m2, m3, m4 = st.columns(4)
 m1.metric("Vật thể di chuyển", len(movers))
-m2.metric("Nguồn chỉ đổi độ sáng", len(cands) - len(movers))
+m2.metric("Nguồn chỉ đổi độ sáng", len(don_le))
 m3.metric("Nhiễu ảnh trừ (1σ)", f"{sigma:.3g}")
 m4.metric("Dịch chuyển lớn nhất", f'{max((c["sep"] for c in movers), default=0):.0f}″')
 
@@ -1001,7 +1280,9 @@ with tab_so_sanh:
                 ax.annotate("", xy=(c["x2"], c["y2"]), xytext=(c["x1"], c["y1"]),
                             arrowprops=dict(arrowstyle="->", color=C_HIT, lw=1, alpha=.8,
                                             shrinkA=R * 2.2, shrinkB=R * 2.2))
-                ax.text(c["x2"], c["y2"] + R * 1.4, c["id"], color=C_HIT, ha="center", fontsize=7)
+                ngan = simbad_ngan(c["simbad"])
+                ax.text(c["x2"], c["y2"] + R * 1.4, f'{c["id"]} · {ngan}' if ngan else c["id"],
+                        color=C_HIT, ha="center", fontsize=7)
             else:
                 x = c["x2"] if not np.isnan(c["x2"]) else c["x1"]
                 y = c["y2"] if not np.isnan(c["y2"]) else c["y1"]
@@ -1019,7 +1300,8 @@ with tab_so_sanh:
         st.caption(f"Biểu đồ chỉ vẽ {len(cands_ve)}/{len(cands)} ứng viên có độ tin cậy cao nhất "
                    "(ưu tiên vật thể di chuyển). Danh sách đầy đủ nằm ở tab Dữ liệu ứng viên.")
 
-    loc_txt = f" Đã loại **{n_dipole}** lưỡng cực sao tĩnh (dịch chuyển < {MIN_SHIFT_PX:g} px)." if n_dipole else ""
+    n_bo = loc["dipole"] + loc["spike"] + loc["elong"] + loc["veto"] + loc["trail"]
+    loc_txt = f" Các bộ lọc đã loại **{n_bo}** nhiễu giả (chi tiết ở dòng Bộ lọc phía trên)." if n_bo else ""
     if movers:
         st.success(f"Lọc ở ngưỡng {nguong_sigma}σ, dịch chuyển {MIN_SHIFT_PX:g}–{ban_kinh} px: "
                    f"tìm thấy **{len(movers)}** vật thể di chuyển (|Δ độ sáng| ≤ {MAX_DFLUX_PCT:g}%).{loc_txt}")
@@ -1091,6 +1373,21 @@ with tab_du_lieu:
             st.warning(f"Header FITS không có mốc thời gian (MJD-OBS / DATE-OBS) nên Δt = {DT_FALLBACK_H} giờ là "
                        "giá trị GIẢ ĐỊNH. Cột vận tốc góc vì thế chỉ mang tính minh họa, không phải số đo.")
 
+    if dung_simbad and co_toa_do_that:
+        thong_ke = (f"**SIMBAD** (bán kính {SIMBAD_RADIUS:g}″, {min(len(movers) + len(don_le), SIMBAD_TOP)} ứng viên "
+                    f"được tra): **{n_khop}** khớp danh mục · **{n_la}** vật thể lạ chưa định danh")
+        if n_offline:
+            st.warning(thong_ke + f" · **{n_offline}** không tra được do lỗi kết nối SIMBAD.")
+        elif any(c["simbad"] == SIMBAD_NO_LIB for c in cands):
+            st.warning("Chưa cài `astroquery` nên không đối chiếu được SIMBAD. Chạy `pip install astroquery`.")
+        else:
+            st.info(thong_ke)
+        st.caption("SIMBAD không chứa tiểu hành tinh và sao chổi, và không đầy đủ với sao mờ. "
+                   "\"Chưa định danh\" nghĩa là không có thiên thể SIMBAD trong bán kính tìm kiếm, "
+                   "chưa phải bằng chứng về một vật thể mới.")
+    elif dung_simbad:
+        st.caption("Không đối chiếu SIMBAD: tọa độ của dữ liệu này không ứng với bầu trời thật.")
+
     def lam_tron(v, n):
         return None if v is None else round(v, n)
 
@@ -1099,7 +1396,7 @@ with tab_du_lieu:
         x = c["x2"] if not np.isnan(c["x2"]) else c["x1"]
         y = c["y2"] if not np.isnan(c["y2"]) else c["y1"]
         rows.append({
-            "Mã ứng viên": c["id"], "Phân loại": c["loai"],
+            "Mã ứng viên": c["id"], "Định danh thiên văn (SIMBAD)": c["simbad"], "Phân loại": c["loai"],
             "RA1 (độ)": lam_tron(c["ra1"], 5), "Dec1 (độ)": lam_tron(c["dec1"], 5),
             "RA2 (độ)": lam_tron(c["ra2"], 5), "Dec2 (độ)": lam_tron(c["dec2"], 5),
             "x (px)": round(x, 2), "y (px)": round(y, 2),
