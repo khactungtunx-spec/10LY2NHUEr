@@ -84,6 +84,49 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
+# =============================================================================
+# 1b. MÀN HÌNH HƯỚNG DẪN (ONBOARDING) - chỉ hiện 1 lần mỗi phiên
+# =============================================================================
+if "tutorial_done" not in st.session_state:
+    st.session_state.tutorial_done = False
+
+if not st.session_state.tutorial_done:
+    st.title("🚀 Hướng dẫn nhanh: SPHEREx Sky Tracker")
+    st.markdown(
+        "Chào mừng bạn đến với hệ thống phân tích dữ liệu thiên văn của **10LY2NHUEr**. "
+        "Để phát hiện vật thể di chuyển, hệ thống sẽ thực hiện 3 bước:"
+    )
+
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        st.info(
+            "**1. Nạp Dữ Liệu**\n\n"
+            "Truy xuất trực tiếp từ kho dữ liệu NASA qua tọa độ, hoặc tải lên ảnh .FITS thủ công để khảo sát."
+        )
+    with col2:
+        st.warning(
+            "**2. Đồng Bộ & Lọc Nhiễu**\n\n"
+            "Hệ thống tự động căn chỉnh tọa độ WCS và trừ ảnh. "
+            "Bạn có thể kéo thanh trượt Sigma để lọc nhiễu hạt."
+        )
+    with col3:
+        st.success(
+            "**3. Trích Xuất**\n\n"
+            "Nhận diện quỹ đạo nội suy và tải xuống bảng tọa độ RA/Dec của các ứng viên."
+        )
+
+    st.write("")
+    try:
+        bat_dau = st.button("Bắt đầu 🌌", type="primary", width="stretch", key="btn_start")
+    except TypeError:  # Streamlit bản cũ chưa có tham số width
+        bat_dau = st.button("Bắt đầu 🌌", type="primary", use_container_width=True, key="btn_start")
+
+    if bat_dau:
+        st.session_state.tutorial_done = True
+        st.rerun()
+
+    st.stop()  # Chặn toàn bộ phần còn lại của app.py khi chưa bấm "Bắt đầu"
+
 plt.style.use("dark_background")
 plt.rcParams.update({
     "figure.facecolor": BG, "axes.facecolor": BG, "savefig.facecolor": BG,
