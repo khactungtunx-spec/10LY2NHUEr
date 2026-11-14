@@ -1,14 +1,14 @@
 # -*- coding: utf-8 -*-
 """
 SPHEREx Sky Tracker - MVP giao diện Streamlit (NASA Space Apps)
-Cài:   pip install streamlit numpy pandas matplotlib astropy reproject scipy
+Cài:   pip install streamlit numpy pandas matplotlib astropy reproject scipy scikit-image
 Chạy:  streamlit run app.py --theme.base dark
 Dữ liệu demo (tùy chọn): data/spherex_t1_demo.fits, data/spherex_t2_demo.fits
 """
 import io
+import re
 import time
 import warnings
-from collections import deque
 from pathlib import Path
 
 import matplotlib.pyplot as plt
@@ -33,7 +33,9 @@ C_T2 = "#ff9f1c"      # cam   = vị trí mới (T2)
 C_HIT = "#7CFC00"     # xanh lá = ứng viên di chuyển
 C_VAR = "#ffd166"     # vàng  = nguồn chỉ đổi độ sáng
 
-PIXEL_SCALE = 6.2     # arcsec/pixel của SPHEREx
+PIXEL_SCALE_DEFAULT = 6.2   # arcsec/pixel của SPHEREx, dùng khi header thiếu WCS
+DT_FALLBACK_H = 43.2        # giờ (= 1.8 ngày): Δt giả định khi header thiếu mốc thời gian
+MOCK_DT_H = 182.5 * 24      # giờ: dữ liệu giả lập mô phỏng hai lần chụp cách nhau 6 tháng
 
 # Đường dẫn 2 file demo SPHEREx thật (đã cắt 512x512)
 DATA_DIR = Path(__file__).resolve().parent / "data"
@@ -44,18 +46,37 @@ SRC_DEMO = "Dữ liệu SPHEREx thật (Có sẵn)"
 SRC_MOCK = "Giả lập (Mock)"
 SRC_UPLOAD = "Dữ liệu SPHEREx thật (Upload)"
 
-MIN_SHIFT_PX = 3.0    # dịch chuyển tối thiểu (>= 18.6 arcsec); nhỏ hơn = dư ảnh sao tĩnh
-MAX_FLUX_RATIO = 1.6  # tỷ số thông lượng T2/T1 tối đa khi ghép cặp
-TOP_N = 12            # số ứng viên tối đa được vẽ trên biểu đồ
-MAX_DFLUX_PCT = 35.0  # |Δ độ sáng| tối đa (%) để một cặp được coi là "Di chuyển"
+BANDS = ["Band 1 (0.75 – 1.09 µm)", "Band 2 (1.10 – 1.62 µm)", "Band 3 (1.63 – 2.41 µm)",
+         "Band 4 (2.42 – 3.82 µm)", "Band 5 (3.83 – 4.41 µm)", "Band 6 (4.42 – 5.00 µm)"]
+BAND_EDGES = [(0.75, 1.095), (1.095, 1.625), (1.625, 2.415), (2.415, 3.825), (3.825, 4.415), (4.415, 5.0)]
 
-# Cân bằng quang thông & mặt nạ vật lý (chỉ áp dụng cho dữ liệu SPHEREx thật)
-BRIGHT_K = 15.0           # pixel sao sáng chung: > 15σ trên cả T1 và T2
-SCALE_CLIP = (0.7, 1.3)   # giới hạn hệ số tỷ lệ quang thông T2/T1
-EDGE_PX = 15              # gọt biên vùng phủ sau reproject (pixel)
-SAT_K = 250.0             # tâm sao cực sáng / bão hòa: > 250σ
-HALO_R = 18               # bán kính che hào quang quanh sao cực sáng (pixel)
-MIN_SCALE_STARS = 5       # cần tối thiểu ngần này sao sáng chung mới chỉnh tỷ lệ quang thông
+LOAI_MOVE = "Di chuyển"
+LOAI_NEW = "Nguồn mới / Sáng lên"
+LOAI_GONE = "Mờ đi / Biến mất"
+
+# Phát hiện & ghép cặp
+MIN_SHIFT_PX = 3.0    # dịch chuyển tối thiểu; nhỏ hơn = lưỡng cực của sao đứng yên
+MAX_DFLUX_PCT = 35.0  # |Δ độ sáng| tối đa (%) để một cặp được coi là "Di chuyển"
+PEAK_WIN = 7          # cửa sổ lọc cực đại (pixel) để khử các đỉnh kề nhau
+MAX_PEAKS = 400       # giới hạn số đỉnh mỗi dấu
+TOP_N = 12            # số ứng viên tối đa được vẽ trên biểu đồ
+R_DEFAULT_REAL = 45   # bán kính ghép cặp mặc định cho dữ liệu thật (pixel)
+R_DEFAULT_MOCK = 60   # ... và cho dữ liệu giả lập (vật thể mock dịch tới 51 px)
+
+# Căn chỉnh dưới pixel (tương quan pha)
+REG_CROP = 0.10       # bỏ 10% viền mỗi cạnh khi đo
+REG_UPSAMPLE = 20     # độ chính xác 1/20 = 0.05 pixel
+REG_MIN, REG_MAX = 0.03, 15.0   # chỉ dịch khi độ lệch nằm trong khoảng này (pixel)
+
+# Cân bằng quang thông & mặt nạ hình thái học (chỉ áp dụng cho dữ liệu SPHEREx thật)
+BRIGHT_LO, BRIGHT_HI = 15.0, 200.0   # sao sáng chung chưa bão hòa: 15σ - 200σ trên nền
+MIN_BRIGHT_PIX = 10                  # cần tối thiểu ngần này pixel sao sáng mới chỉnh tỷ lệ
+SCALE_CLIP = (0.7, 1.3)              # giới hạn hệ số tỷ lệ quang thông T2/T1
+EDGE_PX = 15                         # gọt biên vùng phủ sau khi chiếu lưới (pixel)
+SAT_K = 1000.0                       # tâm sao bão hòa: > nền + 1000σ ...
+SAT_PCTL = 99.85                     # ... và không thấp hơn bách phân vị 99.85
+HALO_R = 12                          # bán kính che hào quang (pixel)
+HALO_MAX_PCT = 10.0                  # diện tích che hào quang tối đa (% khung hình)
 
 # Các cờ FLAGS được coi là pixel hỏng (theo danh sách bad_flags trong tutorial của IRSA).
 # KHÔNG gồm SOURCE (bit 21, nguồn đã biết) và các cờ GHOST (bit 22-24).
@@ -207,34 +228,165 @@ def generate_mock_data(seed=42, n_movers=3, size=128):
     return img_t1, img_t2
 
 
-def read_spherex(raw):
-    """Đọc 1 file FITS SPHEREx Level 2 (bytes).
-    Trả về dict: image, zodi, flags (None nếu thiếu HDU), header (chuỗi) của HDU ảnh."""
+def clipped_stats(values):
+    """Trung vị và độ lệch chuẩn sau khi cắt 3σ (5 vòng lặp).
+    An toàn với mảng rỗng / toàn NaN: khi đó trả về (0.0, 1.0)."""
+    v = np.asarray(values, dtype=float).ravel()
+    v = v[np.isfinite(v)]
+    if v.size == 0:
+        return 0.0, 1.0
+    med, std = None, None
+    try:
+        from astropy.stats import sigma_clipped_stats
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            _, med, std = sigma_clipped_stats(v, sigma=3.0, maxiters=5)  # (mean, median, std)
+        med, std = float(med), float(std)
+    except ImportError:
+        for _ in range(5):
+            m, s = np.median(v), v.std()
+            keep = np.abs(v - m) <= 3.0 * s
+            if s == 0 or keep.all():
+                break
+            v = v[keep]
+        med, std = float(np.median(v)), float(v.std())
+    if not np.isfinite(med):
+        med = 0.0
+    if not np.isfinite(std) or std <= 0:
+        std = 1.4826 * float(np.median(np.abs(v - np.median(v))))  # thử MAD
+        if not np.isfinite(std) or std <= 0:
+            std = 1.0
+    return med, std
+
+
+def _celestial_wcs(header_str):
+    """Dựng WCS 2 chiều từ chuỗi header; trả None nếu không có hệ tọa độ thiên cầu hợp lệ."""
+    if not header_str:
+        return None
+    try:
+        from astropy.io import fits
+        from astropy.wcs import WCS
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            w = WCS(fits.Header.fromstring(header_str), naxis=2)
+        return w if w.has_celestial else None
+    except Exception:
+        return None
+
+
+def _obs_mjd(headers):
+    """Mốc thời gian quan sát (MJD) từ header; None nếu không có."""
+    for hdr in headers:
+        for k in ("MJD-OBS", "MJD-AVG", "MJD-BEG"):
+            try:
+                v = float(hdr.get(k))
+                if np.isfinite(v) and v > 0:
+                    return v
+            except (TypeError, ValueError):
+                pass
+        for k in ("DATE-OBS", "DATE-AVG", "DATE-BEG"):
+            v = hdr.get(k)
+            if v:
+                try:
+                    from astropy.time import Time
+                    with warnings.catch_warnings():
+                        warnings.simplefilter("ignore")
+                        return float(Time(str(v).strip()).mjd)
+                except Exception:
+                    pass
+    return None
+
+
+def _band_from_headers(headers):
+    """Chỉ số band (0-5) và mô tả nguồn, đọc từ FILTER / BAND / DETECTOR / WAVELEN."""
+    for hdr in headers:
+        for k in ("FILTER", "BAND", "DETECTOR"):
+            v = hdr.get(k)
+            if v is not None:
+                m = re.search(r"[1-6]", str(v))
+                if m:
+                    return int(m.group()) - 1, f"{k} = {v}"
+        v = hdr.get("WAVELEN")
+        try:
+            w = float(v)
+            for i, (lo, hi) in enumerate(BAND_EDGES):
+                if lo <= w <= hi:
+                    return i, f"WAVELEN = {w:g} µm"
+        except (TypeError, ValueError):
+            pass
+    return None, None
+
+
+@st.cache_data(show_spinner=False)
+def load_fits(raw):
+    """Đọc 1 file FITS (bytes): tự dò HDU khoa học có WCS, các HDU phụ (ZODI, FLAGS) và metadata."""
     from astropy.io import fits  # import trễ: chỉ cần khi dùng dữ liệu thật
 
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
         with fits.open(io.BytesIO(raw)) as hdul:
-            by_name = {h.name.upper(): h for h in hdul}
-            hdu = by_name.get("IMAGE")
-            if hdu is None or hdu.data is None or np.ndim(hdu.data) != 2:
-                # File không theo chuẩn SPHEREx: lấy mảng 2D đầu tiên
-                hdu = next((h for h in hdul if h.data is not None and np.ndim(h.data) == 2), None)
-            if hdu is None:
-                raise ValueError("Không tìm thấy ảnh 2D trong file FITS.")
+            def co_anh(h):
+                return getattr(h, "data", None) is not None and np.ndim(h.data) >= 2
 
-            out = {"image": np.array(hdu.data, dtype=float), "zodi": None, "flags": None,
-                   "flag_bits": {}, "header": hdu.header.tostring()}
-            for key in ("ZODI", "FLAGS"):
-                h = by_name.get(key)
-                if h is not None and h is not hdu and h.data is not None and h.data.shape == out["image"].shape:
-                    out[key.lower()] = np.array(h.data)
-                    if key == "FLAGS":
-                        # Header FLAGS của SPHEREx ghi tên cờ của bit n trong từ khóa MSKNnnnn
-                        for k, v in h.header.items():
-                            if k.startswith("MSKN") and k[4:].isdigit():
-                                out["flag_bits"][str(v).strip().upper()] = int(k[4:])
+            by_name = {h.name.upper(): h for h in hdul}
+            ten_phu = ("ZODI", "BACKGROUND", "FLAGS", "DQ", "VARIANCE", "PSF")
+            # Ưu tiên HDU tên IMAGE/SCI; sau đó HDU đầu tiên có ảnh + WCS thiên cầu; cuối cùng ảnh bất kỳ
+            sci = next((by_name[n] for n in ("IMAGE", "SCI") if n in by_name and co_anh(by_name[n])), None)
+            if sci is None:
+                sci = next((h for h in hdul if co_anh(h) and h.name.upper() not in ten_phu
+                            and "CTYPE1" in h.header and "CRVAL1" in h.header), None)
+            if sci is None:
+                sci = next((h for h in hdul if co_anh(h) and h.name.upper() not in ten_phu), None)
+            if sci is None:
+                raise ValueError("Không tìm thấy ảnh (>= 2 chiều) trong file FITS.")
+
+            data = np.array(sci.data)
+            while data.ndim > 3:
+                data = data[0]
+            out = {"data": data, "n_planes": data.shape[0] if data.ndim == 3 else 1,
+                   "zodi": None, "flags": None, "flag_bits": {}, "header": sci.header.tostring()}
+
+            def phu(names):
+                for n in names:
+                    h = by_name.get(n)
+                    if h is not None and h is not sci and co_anh(h) and np.shape(h.data)[-2:] == data.shape[-2:]:
+                        return h
+                return None
+
+            hz, hf = phu(("ZODI", "BACKGROUND")), phu(("FLAGS", "DQ"))
+            if hz is not None:
+                out["zodi"] = np.array(hz.data)
+            if hf is not None:
+                out["flags"] = np.array(hf.data)
+                # Header FLAGS của SPHEREx ghi tên cờ của bit n trong từ khóa MSKNnnnn
+                for k, v in hf.header.items():
+                    if k.startswith("MSKN") and k[4:].isdigit():
+                        out["flag_bits"][str(v).strip().upper()] = int(k[4:])
+
+            headers = [sci.header, hdul[0].header]
+            out["mjd"] = _obs_mjd(headers)
+            out["band_idx"], out["band_src"] = _band_from_headers(headers)
+
+    # Độ phân giải góc đọc trực tiếp từ ma trận WCS
+    out["pixel_scale"], out["pixel_scale_src"] = PIXEL_SCALE_DEFAULT, "mặc định"
+    w = _celestial_wcs(out["header"])
+    if w is not None:
+        try:
+            from astropy.wcs.utils import proj_plane_pixel_scales
+            ps = float(np.mean(proj_plane_pixel_scales(w)) * 3600.0)
+            if np.isfinite(ps) and 0.01 < ps < 3600:
+                out["pixel_scale"], out["pixel_scale_src"] = ps, "WCS"
+        except Exception:
+            pass
     return out
+
+
+def _plane(arr, idx):
+    """Lấy lát cắt 2D từ ảnh 2D hoặc khối 3D (n_bands, H, W)."""
+    arr = np.asarray(arr)
+    if arr.ndim == 3:
+        arr = arr[min(max(int(idx), 0), arr.shape[0] - 1)]
+    return arr
 
 
 def bad_pixel_mask(flags, flag_bits):
@@ -249,253 +401,311 @@ def bad_pixel_mask(flags, flag_bits):
     return (f & mask_value) != 0, nguon
 
 
-def _celestial_wcs(header_str):
-    """Dựng WCS từ chuỗi header; trả None nếu không có hệ tọa độ bầu trời hợp lệ."""
-    if not header_str:
-        return None
-    try:
-        from astropy.io import fits
-        from astropy.wcs import WCS
-        with warnings.catch_warnings():
-            warnings.simplefilter("ignore")
-            w = WCS(fits.Header.fromstring(header_str))
-        return w if w.has_celestial else None
-    except Exception:
-        return None
+def _corr(a, b, m):
+    """Hệ số tương quan của a và b trên mặt nạ m (dùng để kiểm tra bước tinh chỉnh có cải thiện không)."""
+    if m.sum() < 50:
+        return -1.0
+    x, y = a[m] - a[m].mean(), b[m] - b[m].mean()
+    den = float(np.sqrt((x * x).sum() * (y * y).sum()))
+    return float((x * y).sum() / den) if den > 0 else -1.0
 
 
-@st.cache_data(show_spinner="Đang tiền xử lý và đồng bộ WCS…")
-def prepare_real(raw1, raw2, tru_zodi, loc_flags):
-    """Tiền xử lý Level 2 (ZODI, FLAGS) rồi chiếu T2 về lưới WCS của T1.
-    Sau đó: cân bằng quang thông T2/T1, gọt biên và che hào quang sao cực sáng.
-    Trả về: img1, img2 (đã chiếu và chuẩn hóa), valid_mask, info, header T1."""
-    a, b = read_spherex(raw1), read_spherex(raw2)
+@st.cache_data(show_spinner="Đang tiền xử lý và căn chỉnh WCS 2 bước…")
+def prepare_real(raw1, raw2, tru_zodi, loc_flags, cube_index=0):
+    """Giai đoạn 1: tiền xử lý Level 2 -> chiếu lưới WCS (2A) -> tinh chỉnh dưới pixel (2B)
+    -> cân bằng quang thông -> gọt biên -> che hào quang sao bão hòa.
+    Trả về: t1 - nền, t2 đã căn chỉnh - nền, valid_mask, info, header T1."""
+    a, b = load_fits(raw1), load_fits(raw2)
     info = {"zodi": False, "flags_pct": None, "flags_src": None, "wcs": "no_wcs",
-            "scale": 1.0, "n_bright": 0, "edge": False, "n_sat": 0, "halo_pct": 0.0}
-    imgs, pcts = [], []
-    for d in (a, b):
-        img = d["image"].copy()
-        img[~np.isfinite(img)] = np.nan
-        if tru_zodi and d["zodi"] is not None:
-            img -= d["zodi"]                 # khử nền ánh sáng hoàng đạo
-        if loc_flags and d["flags"] is not None:
-            bad, info["flags_src"] = bad_pixel_mask(d["flags"], d["flag_bits"])
-            img[bad] = np.nan                # chỉ che pixel hỏng / tia vũ trụ, giữ nguyên sao (SOURCE)
-            pcts.append(float(bad.mean() * 100))
-        imgs.append(img)
-    img1, img2 = imgs
-    info["zodi"] = bool(tru_zodi and a["zodi"] is not None and b["zodi"] is not None)
-    if len(pcts) == 2:
-        info["flags_pct"] = tuple(pcts)
+            "reg": "none", "dx": 0.0, "dy": 0.0, "shift_arcsec": 0.0,
+            "scale": 1.0, "n_bright": 0, "edge": False, "n_sat": 0, "halo_pct": 0.0,
+            "pixel_scale": a["pixel_scale"], "pixel_scale_src": a["pixel_scale_src"]}
 
-    wcs1, wcs2 = _celestial_wcs(a["header"]), _celestial_wcs(b["header"])
-    footprint = None
-    if wcs1 is not None and wcs2 is not None:
-        try:
-            from reproject import reproject_interp
-            with warnings.catch_warnings():
-                warnings.simplefilter("ignore")
-                img2_goc = img2
-                img2, footprint = reproject_interp((img2_goc, wcs2), wcs1, shape_out=img1.shape)
-                # Vùng phủ hình học của T2 trên lưới T1 (không bị khoét lỗ bởi các pixel NaN)
-                _, phu_hinh_hoc = reproject_interp((np.ones(img2_goc.shape), wcs2), wcs1, shape_out=img1.shape)
-            info["wcs"] = "ok"
-        except ImportError:
-            info["wcs"] = "no_reproject"
-
-    if footprint is None:
-        if img1.shape != img2.shape:
-            raise ValueError(f"Không đồng bộ được WCS và kích thước hai ảnh khác nhau: {img1.shape} và {img2.shape}.")
-        footprint = np.ones(img1.shape)
-        phu_hinh_hoc = footprint
-
-    phu = np.nan_to_num(phu_hinh_hoc) > 0                 # vùng T2 phủ lên lưới T1
-    valid = np.isfinite(img1) & np.isfinite(img2) & (footprint > 0)
-    if valid.sum() < 100:
-        raise ValueError("Gần như không còn pixel hợp lệ chung giữa T1 và T2 "
-                         "(hai ảnh không chồng lấn, hoặc mặt nạ FLAGS che gần hết - thử tắt lọc FLAGS).")
-
-    # Nền và nhiễu bền vững (trung vị + MAD) của từng ảnh trên vùng hợp lệ
-    def _bg_sigma(img):
-        v = img[valid]
-        bg = float(np.median(v))
-        sg = 1.4826 * float(np.median(np.abs(v - bg)))
-        return bg, (sg if sg > 0 else 1.0)
-
-    bg1, sigma_1 = _bg_sigma(img1)
-    bg2, sigma_2 = _bg_sigma(img2)
-    s1, s2 = img1 - bg1, img2 - bg2                       # tín hiệu trên nền
+    # Khoảng thời gian giữa hai lần chụp
+    if a["mjd"] is not None and b["mjd"] is not None and abs(b["mjd"] - a["mjd"]) > 0:
+        info["dt_hours"], info["dt_src"] = abs(b["mjd"] - a["mjd"]) * 24.0, "header"
+    else:
+        info["dt_hours"], info["dt_src"] = DT_FALLBACK_H, "fallback"
 
     try:
         from scipy import ndimage
     except ImportError:
         ndimage = None
 
-    # (1) Cân bằng tỷ lệ quang thông trên các sao sáng chung của T1 và T2
-    with np.errstate(invalid="ignore", divide="ignore"):
-        bright_mask = valid & (s1 > BRIGHT_K * sigma_1) & (s2 > BRIGHT_K * sigma_2)
+    with np.errstate(all="ignore"), warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+
+        # ---- 1. Tiền xử lý Level 2: ZODI và FLAGS, TRƯỚC khi chiếu lưới ----
+        imgs, pcts = [], []
+        for d in (a, b):
+            img = np.array(_plane(d["data"], cube_index), dtype=float)
+            img[~np.isfinite(img)] = np.nan
+            if tru_zodi and d["zodi"] is not None:
+                img = img - np.asarray(_plane(d["zodi"], cube_index), dtype=float)
+            if loc_flags and d["flags"] is not None:
+                bad, info["flags_src"] = bad_pixel_mask(_plane(d["flags"], cube_index), d["flag_bits"])
+                img[bad] = np.nan      # che pixel hỏng / tia vũ trụ để không bị nội suy loang ra xung quanh
+                pcts.append(float(bad.mean() * 100))
+            imgs.append(img)
+        t1, t2 = imgs
+        info["zodi"] = bool(tru_zodi and a["zodi"] is not None and b["zodi"] is not None)
+        if len(pcts) == 2:
+            info["flags_pct"] = tuple(pcts)
+
+        # ---- 2A. Chiếu lưới thiên cầu: T2 -> hệ quy chiếu (RA, Dec) của T1 ----
+        wcs1, wcs2 = _celestial_wcs(a["header"]), _celestial_wcs(b["header"])
+        footprint = phu = None
+        if wcs1 is not None and wcs2 is not None:
+            try:
+                from reproject import reproject_interp
+                t2_goc = t2
+                t2, footprint = reproject_interp((t2_goc, wcs2), wcs1, shape_out=t1.shape, order="bilinear")
+                # Vùng phủ hình học của T2 trên lưới T1 (không bị khoét lỗ bởi các pixel NaN)
+                _, phu = reproject_interp((np.ones(t2_goc.shape), wcs2), wcs1, shape_out=t1.shape,
+                                          order="bilinear")
+                info["wcs"] = "ok"
+            except ImportError:
+                info["wcs"] = "no_reproject"
+        if footprint is None:
+            if t1.shape != t2.shape:
+                raise ValueError(f"Không đồng bộ được WCS và kích thước hai ảnh khác nhau: {t1.shape} và {t2.shape}.")
+            footprint = phu = np.ones(t1.shape)
+
+        phu = np.nan_to_num(phu) > 0.5
+        ok1 = np.isfinite(t1)
+        ok2 = (np.nan_to_num(footprint) > 0.5) & np.isfinite(t2)   # pixel hợp lệ của riêng T2
+        valid = ok1 & ok2
+        if valid.sum() < 100:
+            raise ValueError("Gần như không còn pixel hợp lệ chung giữa T1 và T2 "
+                             "(hai ảnh không chồng lấn, hoặc mặt nạ FLAGS che gần hết - thử tắt lọc FLAGS).")
+
+        med1, s1 = clipped_stats(t1[valid])
+        med2, s2 = clipped_stats(t2[valid])
+
+        # ---- 2B. Tinh chỉnh lệch tâm dưới mức pixel bằng tương quan pha ----
+        H, W = t1.shape
+        loi = (slice(int(REG_CROP * H), int((1 - REG_CROP) * H)), slice(int(REG_CROP * W), int((1 - REG_CROP) * W)))
+
+        def nen_dai_dong(img, med, sig):
+            """Điền NaN bằng nền rồi nén dải động để sao quá sáng không lấn át phổ FFT."""
+            return np.arcsinh((np.where(np.isfinite(img), img, med) - med) / max(sig, 1e-8))
+
+        if ndimage is None:
+            info["reg"] = "no_scipy"
+        else:
+            try:
+                from skimage.registration import phase_cross_correlation
+                ref_norm, mov_norm = nen_dai_dong(t1, med1, s1), nen_dai_dong(t2, med2, s2)
+                try:
+                    shift = phase_cross_correlation(ref_norm[loi], mov_norm[loi], upsample_factor=REG_UPSAMPLE,
+                                                    normalization=None)[0]
+                except TypeError:  # scikit-image cũ chưa có tham số normalization
+                    shift = phase_cross_correlation(ref_norm[loi], mov_norm[loi], upsample_factor=REG_UPSAMPLE)[0]
+                shift_y, shift_x = float(shift[0]), float(shift[1])
+                do_lech = float(np.hypot(shift_y, shift_x))
+                info["dx"], info["dy"] = shift_x, shift_y
+                info["shift_arcsec"] = do_lech * info["pixel_scale"]
+                if not np.isfinite(do_lech):
+                    info["reg"], info["dx"], info["dy"], info["shift_arcsec"] = "failed", 0.0, 0.0, 0.0
+                elif do_lech < REG_MIN:
+                    info["reg"] = "small"
+                elif do_lech > REG_MAX:
+                    info["reg"] = "too_big"
+                else:
+                    # Dịch ảnh (bậc 3) sau khi điền nền vào ô NaN; dịch riêng mặt nạ bằng bậc 0
+                    t2_dich = ndimage.shift(np.where(np.isfinite(t2), t2, med2), shift=(shift_y, shift_x),
+                                            order=3, mode="constant", cval=med2)
+                    ok2_dich = ndimage.shift(ok2.astype(float), shift=(shift_y, shift_x),
+                                             order=0, mode="constant", cval=0.0) > 0.5
+                    phu_dich = ndimage.shift(phu.astype(float), shift=(shift_y, shift_x),
+                                             order=0, mode="constant", cval=0.0) > 0.5
+                    t2_dich[~ok2_dich] = np.nan
+                    # Chỉ nhận phép dịch nếu nó thật sự làm hai ảnh khớp nhau hơn
+                    m_truoc = np.zeros_like(valid); m_truoc[loi] = valid[loi]
+                    m_sau = np.zeros_like(valid); m_sau[loi] = (ok1 & ok2_dich)[loi]
+                    c_truoc = _corr(ref_norm, mov_norm, m_truoc)
+                    c_sau = _corr(ref_norm, nen_dai_dong(t2_dich, med2, s2), m_sau)
+                    if c_sau >= c_truoc:
+                        t2, ok2, phu = t2_dich, ok2_dich, phu & phu_dich
+                        valid = ok1 & ok2
+                        med2, s2 = clipped_stats(t2[valid])
+                        info["reg"] = "applied"
+                    else:
+                        info["reg"] = "rejected"
+            except ImportError:
+                info["reg"] = "no_skimage"
+
+        if valid.sum() < 100:
+            raise ValueError("Gần như không còn pixel hợp lệ sau bước căn chỉnh.")
+
+        # ---- 3a. Cân bằng tỷ lệ quang thông trên các sao sáng chung, chưa bão hòa ----
+        d1, d2 = t1 - med1, t2 - med2
+        bright_mask = (valid & (d1 > BRIGHT_LO * s1) & (d1 < BRIGHT_HI * s1)
+                       & (d2 > BRIGHT_LO * s2) & (d2 < BRIGHT_HI * s2))
         ratio = np.nan
-        if ndimage is not None and bright_mask.any():
-            # Tỷ số tính theo TỔNG thông lượng từng sao (khẩu độ = vùng sáng nở thêm 2 px), rồi lấy
-            # trung vị giữa các sao. Tỷ số từng pixel bị lệch thấp vì reproject làm nhòe đỉnh sao ở T2.
-            nhan, n_sao = ndimage.label(ndimage.binary_dilation(bright_mask, iterations=2))
-            idx = np.arange(1, n_sao + 1)
-            f1 = ndimage.sum(np.where(valid, s1, 0.0), nhan, idx)
-            f2 = ndimage.sum(np.where(valid, s2, 0.0), nhan, idx)
-            ok = f1 > 0
-            info["n_bright"] = int(ok.sum())
-            if info["n_bright"] >= MIN_SCALE_STARS:
-                ratio = float(np.median(f2[ok] / f1[ok]))
-        elif bright_mask.sum() >= 20:
-            # Không có scipy: dùng trung vị tỷ số từng pixel
-            info["n_bright"] = MIN_SCALE_STARS
-            ratio = float(np.nanmedian(s2[bright_mask] / s1[bright_mask]))
+        if bright_mask.sum() >= MIN_BRIGHT_PIX:
+            if ndimage is not None:
+                # Tỷ số theo TỔNG thông lượng từng sao (vùng sáng nở thêm 2 px), rồi lấy trung vị giữa các sao.
+                # Tỷ số từng pixel bị lệch thấp vì phép nội suy làm nhòe đỉnh sao ở T2.
+                nhan, n_sao = ndimage.label(ndimage.binary_dilation(bright_mask, iterations=2))
+                idx = np.arange(1, n_sao + 1)
+                f1 = np.atleast_1d(ndimage.sum(np.where(valid, d1, 0.0), nhan, idx))
+                f2 = np.atleast_1d(ndimage.sum(np.where(valid, d2, 0.0), nhan, idx))
+                ok = f1 > 0
+                info["n_bright"] = int(ok.sum())
+                if ok.any():
+                    ratio = float(np.median(f2[ok] / f1[ok]))
+            else:
+                info["n_bright"] = int(bright_mask.sum())
+                ratio = float(np.nanmedian(d2[bright_mask] / d1[bright_mask]))
         if np.isfinite(ratio) and ratio > 0:
             info["scale"] = float(np.clip(ratio, *SCALE_CLIP))
             info["scale_raw"] = ratio
-        img2 = img2 / info["scale"]
-        s2 = s2 / info["scale"]
-        sigma_2 = sigma_2 / info["scale"]
+            t2 = med2 + (t2 - med2) / info["scale"]
+            s2 = s2 / info["scale"]
 
-        # (2a) Tâm sao cực sáng / bão hòa trên T1 hoặc T2 (xác định trước khi gọt biên)
-        loi = valid & ((s1 > SAT_K * sigma_1) | (s2 > SAT_K * sigma_2))
+        if ndimage is None:
+            info["edge"] = None  # thiếu scipy: bỏ qua gọt biên và che hào quang
+        else:
+            # ---- 3b. Gọt biên nội suy: co VÙNG PHỦ vào trong EDGE_PX pixel (tính cả mép ảnh T1). ----
+            # Không co trực tiếp valid_mask: mỗi pixel bị cờ FLAGS là một "lỗ", phép co sẽ khoét rộng
+            # từng lỗ thêm 15 px và xóa gần hết ảnh.
+            valid = valid & ndimage.binary_erosion(phu, iterations=EDGE_PX, border_value=0)
+            info["edge"] = True
 
-    if ndimage is not None:
-        # (2b) Gọt biên: co VÙNG PHỦ vào trong EDGE_PX pixel (tính cả mép ảnh T1).
-        # Không co trực tiếp valid_mask, vì mỗi pixel bị cờ FLAGS là một "lỗ" và phép co
-        # sẽ khoét rộng từng lỗ thêm 15 px, xóa gần hết ảnh.
-        phu_trong = ndimage.binary_erosion(phu, iterations=EDGE_PX, border_value=0)
-        valid &= phu_trong
-        info["edge"] = True
+            # ---- 3c. Che hào quang quanh tâm sao cực sáng / bão hòa ----
+            if valid.sum() >= 100:
+                sat_1 = max(med1 + SAT_K * s1, float(np.nanpercentile(t1[valid], SAT_PCTL)))
+                sat_2 = max(med2 + SAT_K * s2, float(np.nanpercentile(t2[valid], SAT_PCTL)))
+                yy, xx = np.ogrid[-HALO_R:HALO_R + 1, -HALO_R:HALO_R + 1]
+                disk = (xx ** 2 + yy ** 2) <= HALO_R ** 2
+                he_so = 1.0
+                for _ in range(8):  # nâng ngưỡng cho tới khi vùng che nhỏ hơn HALO_MAX_PCT % khung hình
+                    tam = valid & ((t1 > med1 + he_so * (sat_1 - med1)) | (t2 > med2 + he_so * (sat_2 - med2)))
+                    halo = ndimage.binary_dilation(tam, structure=disk) if tam.any() else np.zeros_like(valid)
+                    info["halo_pct"] = float(halo.mean() * 100)
+                    if info["halo_pct"] < HALO_MAX_PCT:
+                        break
+                    he_so *= 1.5
+                info["n_sat"] = int(ndimage.label(tam, structure=np.ones((3, 3)))[1]) if tam.any() else 0
+                valid = valid & ~halo
 
-        # (2c) Che hào quang: nở các tâm sao cực sáng bằng đĩa tròn bán kính HALO_R
-        if loi.any():
-            yy, xx = np.mgrid[-HALO_R:HALO_R + 1, -HALO_R:HALO_R + 1]
-            dia = (yy ** 2 + xx ** 2) <= HALO_R ** 2
-            halo = ndimage.binary_dilation(loi, structure=dia)
-            info["n_sat"] = int(ndimage.label(loi, structure=np.ones((3, 3)))[1])
-            info["halo_pct"] = float(halo.mean() * 100)
-            valid &= ~halo
-    else:
-        info["edge"] = None  # thiếu scipy: bỏ qua gọt biên và che hào quang
-
-    if valid.sum() < 100:
-        raise ValueError("Gần như không còn pixel hợp lệ sau khi gọt biên và che hào quang sao sáng.")
-    info["valid_pct"] = float(valid.mean() * 100)
-    return img1, img2, valid, info, (a["header"] if wcs1 is not None else None)
+        if valid.sum() < 100:
+            raise ValueError("Gần như không còn pixel hợp lệ sau khi gọt biên và che hào quang sao sáng.")
+        info["valid_pct"] = float(valid.mean() * 100)
+        return t1 - med1, t2 - med2, valid, info, (a["header"] if wcs1 is not None else None)
 
 
 # =============================================================================
 # 3. THUẬT TOÁN PHÁT HIỆN (chạy thật trên ảnh trừ, không hard-code)
 # =============================================================================
-MAX_BLOBS = 400  # giới hạn số đốm mỗi dấu để ghép cặp không bị chậm
+def _max_filter(v, size):
+    """Lọc cực đại cửa sổ size x size (scipy nếu có, nếu không thì numpy thuần)."""
+    try:
+        from scipy.ndimage import maximum_filter
+        return maximum_filter(v, size=size, mode="constant", cval=-np.inf)
+    except ImportError:
+        r = size // 2
+        p = np.pad(v, r, mode="constant", constant_values=-np.inf)
+        return np.lib.stride_tricks.sliding_window_view(p, (size, size)).max(axis=(2, 3))
 
 
-def _find_blobs(mask, values, min_area=3):
-    """Gom các pixel vượt ngưỡng liền kề thành từng đốm (8 hướng)."""
-    if mask.sum() > 200_000:
-        raise ValueError("Quá nhiều pixel vượt ngưỡng - hai ảnh có thể chưa được căn chỉnh (align).")
-    seen = np.zeros(mask.shape, dtype=bool)
-    h, w = mask.shape
-    blobs = []
-    for y0, x0 in np.argwhere(mask):
-        if seen[y0, x0]:
+def _find_peaks(v, nguong):
+    """Cực trị cục bộ của v vượt ngưỡng (cửa sổ PEAK_WIN để khử đỉnh kề nhau),
+    kèm tâm trọng lượng quang thông trong hộp 3x3 quanh mỗi đỉnh."""
+    la_dinh = (v == _max_filter(v, PEAK_WIN)) & (v > nguong)
+    if la_dinh.sum() > 50_000:
+        raise ValueError("Quá nhiều đỉnh vượt ngưỡng - hai ảnh có thể chưa được căn chỉnh, hãy tăng ngưỡng σ.")
+    h, w = v.shape
+    peaks = []
+    for y0, x0 in np.argwhere(la_dinh):
+        ya, yb, xa, xb = max(y0 - 1, 0), min(y0 + 2, h), max(x0 - 1, 0), min(x0 + 2, w)
+        hop = np.clip(v[ya:yb, xa:xb], 0.0, None)
+        tong = float(hop.sum())
+        if tong <= 0:
             continue
-        queue, pix = deque([(y0, x0)]), []
-        seen[y0, x0] = True
-        while queue:
-            y, x = queue.popleft()
-            pix.append((y, x))
-            for dy in (-1, 0, 1):
-                for dx in (-1, 0, 1):
-                    ny, nx = y + dy, x + dx
-                    if 0 <= ny < h and 0 <= nx < w and mask[ny, nx] and not seen[ny, nx]:
-                        seen[ny, nx] = True
-                        queue.append((ny, nx))
-        if len(pix) < min_area:
-            continue  # loại pixel nhiễu đơn lẻ
-        ys, xs = np.array(pix).T
-        v = np.abs(values[ys, xs])
-        blobs.append({"y": float((ys * v).sum() / v.sum()), "x": float((xs * v).sum() / v.sum()),
-                      "flux": float(v.sum()), "peak": float(v.max())})
-    blobs.sort(key=lambda b: -b["peak"])
-    return blobs[:MAX_BLOBS]
+        ys, xs = np.mgrid[ya:yb, xa:xb]
+        peaks.append({"y": float((ys * hop).sum() / tong), "x": float((xs * hop).sum() / tong),
+                      "flux": tong, "peak": float(v[y0, x0])})
+    peaks.sort(key=lambda p: -p["peak"])
+    return peaks[:MAX_PEAKS]
 
 
 @st.cache_data(show_spinner=False)
 def detect(img_t1, img_t2, k_sigma, r_max, valid=None, min_shift_px=MIN_SHIFT_PX):
-    """Trừ ảnh (chỉ trên vùng hợp lệ) -> ước lượng nhiễu -> lọc ngưỡng ->
-    loại dư ảnh sao tĩnh (cặp âm-dương cách nhau < min_shift_px) ->
-    ghép cặp đốm âm (T1) với đốm dương (T2) theo thông lượng VÀ khoảng cách.
-    Trả về: ảnh trừ, sigma, danh sách ứng viên, số dư ảnh sao đã loại."""
-    diff = img_t2 - img_t1
+    """Trừ ảnh (chỉ trên vùng hợp lệ) -> đo nhiễu (cắt 3σ) -> dò cực trị cục bộ + định tâm dưới pixel
+    -> loại lưỡng cực sao tĩnh -> ghép cặp đỉnh âm (T1) với đỉnh dương (T2).
+    Trả về: ảnh trừ, sigma, danh sách ứng viên, số lưỡng cực đã loại."""
+    with np.errstate(all="ignore"):
+        diff = np.asarray(img_t2, dtype=float) - np.asarray(img_t1, dtype=float)
     if valid is None:
         valid = np.isfinite(diff)
+    valid = valid & np.isfinite(diff)
     diff = np.where(valid, diff, np.nan)
+    if not valid.any():
+        return diff, 1.0, [], 0
 
-    vals = diff[valid]
-    med = float(np.median(vals))
-    sigma = 1.4826 * float(np.median(np.abs(vals - med)))  # độ lệch chuẩn bền vững (MAD)
-    sigma = sigma if sigma > 0 else 1.0
-    d = np.where(valid, diff - med, 0.0)  # pixel không hợp lệ = 0 nên không bao giờ vượt ngưỡng
+    diff_med, diff_sigma = clipped_stats(diff[valid])
+    d = np.where(valid, diff - diff_med, 0.0)  # pixel không hợp lệ = 0 nên không bao giờ vượt ngưỡng
 
-    neg = _find_blobs(d < -k_sigma * sigma, d)  # vật thể có ở T1, mất ở T2
-    pos = _find_blobs(d > k_sigma * sigma, d)   # vật thể mới xuất hiện ở T2
+    neg = _find_peaks(-d, k_sigma * diff_sigma)  # vật thể có ở T1, mất ở T2
+    pos = _find_peaks(d, k_sigma * diff_sigma)   # vật thể mới xuất hiện ở T2
 
-    # Bước 1 - Lọc dipole: đốm âm và đốm dương cách nhau dưới min_shift_px là sai số nội suy
-    # sub-pixel của một ngôi sao đứng yên sau khi reproject -> bỏ cả hai, không coi là ứng viên.
-    dip = sorted(
+    # Mọi cặp âm-dương trong bán kính ghép cặp, sắp theo khoảng cách tăng dần (gần nhất ghép trước)
+    cap = sorted(
         (float(np.hypot(p["x"] - n["x"], p["y"] - n["y"])), i, j)
         for i, n in enumerate(neg) for j, p in enumerate(pos)
-        if abs(p["x"] - n["x"]) < min_shift_px and abs(p["y"] - n["y"]) < min_shift_px
+        if abs(p["x"] - n["x"]) <= r_max and abs(p["y"] - n["y"]) <= r_max
     )
-    used_n, used_p, n_dipole = set(), set(), 0
-    for dist, i, j in dip:
-        if dist < min_shift_px and i not in used_n and j not in used_p:
+    used_n, used_p, rows, n_dipole = set(), set(), [], 0
+
+    # Bước 1 - Lưỡng cực: đỉnh âm và đỉnh dương cách nhau dưới min_shift_px là dư ảnh của một
+    # ngôi sao đứng yên (sai số căn chỉnh dưới pixel) -> bỏ cả hai, không coi là ứng viên.
+    for dist, i, j in cap:
+        if dist >= min_shift_px:
+            break
+        if i not in used_n and j not in used_p:
             used_n.add(i); used_p.add(j)
             n_dipole += 1
 
-    # Bước 2 - Ghép cặp tham lam: thông lượng chênh tối đa MAX_FLUX_RATIO lần và
-    # |Δ độ sáng| <= MAX_DFLUX_PCT %, khoảng cách từ min_shift_px đến r_max
-    pairs = []
-    for i, n in enumerate(neg):
-        if i in used_n:
+    # Bước 2 - Ghép mỗi đỉnh âm với đỉnh dương gần nhất chưa ghép, thỏa điều kiện bảo toàn độ sáng
+    for dist, i, j in cap:
+        if dist < min_shift_px or dist > r_max or i in used_n or j in used_p:
             continue
-        for j, p in enumerate(pos):
-            if j in used_p:
-                continue
-            dist = float(np.hypot(p["x"] - n["x"], p["y"] - n["y"]))
-            if dist < min_shift_px or dist > r_max:
-                continue
-            flux_cost = abs(np.log(p["flux"] / n["flux"]))
-            if flux_cost > np.log(MAX_FLUX_RATIO):
-                continue
-            delta_flux_pct = (p["flux"] / n["flux"] - 1) * 100
-            if abs(delta_flux_pct) > MAX_DFLUX_PCT:
-                continue  # vật thể di chuyển thật phải giữ độ sáng gần như không đổi
-            pairs.append((flux_cost + dist / r_max, i, j, dist))
-    pairs.sort()
-
-    dip_n, dip_p, rows = set(used_n), set(used_p), []
-    for _, i, j, dist in pairs:
-        if i in used_n or j in used_p:
+        flux1, flux2 = neg[i]["flux"], pos[j]["flux"]
+        delta_flux_pct = (flux2 - abs(flux1)) / max(abs(flux1), 1e-8) * 100.0
+        if abs(delta_flux_pct) > MAX_DFLUX_PCT:
             continue
         used_n.add(i); used_p.add(j)
         n, p = neg[i], pos[j]
-        rows.append({"loai": "Di chuyển", "x1": n["x"], "y1": n["y"], "x2": p["x"], "y2": p["y"],
-                     "shift_px": dist,
-                     "dflux": (p["flux"] / n["flux"] - 1) * 100,
-                     "snr": min(n["peak"], p["peak"]) / sigma})
+        rows.append({"loai": LOAI_MOVE, "x1": n["x"], "y1": n["y"], "x2": p["x"], "y2": p["y"],
+                     "shift_px": dist, "dflux": delta_flux_pct,
+                     "snr": min(n["peak"], p["peak"]) / diff_sigma})
+
     for j, p in enumerate(pos):
-        if j not in used_p and j not in dip_p:
-            rows.append({"loai": "Sáng lên / mới", "x1": np.nan, "y1": np.nan, "x2": p["x"], "y2": p["y"],
-                         "shift_px": 0.0, "dflux": np.nan, "snr": p["peak"] / sigma})
+        if j not in used_p:
+            rows.append({"loai": LOAI_NEW, "x1": np.nan, "y1": np.nan, "x2": p["x"], "y2": p["y"],
+                         "shift_px": 0.0, "dflux": np.nan, "snr": p["peak"] / diff_sigma})
     for i, n in enumerate(neg):
-        if i not in used_n and i not in dip_n:
-            rows.append({"loai": "Mờ đi / mất", "x1": n["x"], "y1": n["y"], "x2": np.nan, "y2": np.nan,
-                         "shift_px": 0.0, "dflux": np.nan, "snr": n["peak"] / sigma})
+        if i not in used_n:
+            rows.append({"loai": LOAI_GONE, "x1": n["x"], "y1": n["y"], "x2": np.nan, "y2": np.nan,
+                         "shift_px": 0.0, "dflux": np.nan, "snr": n["peak"] / diff_sigma})
     rows.sort(key=lambda r: -r["snr"])
-    return diff, float(sigma), rows, n_dipole
+    return diff, float(diff_sigma), rows, n_dipole
+
+
+def sep_pa(ra1, dec1, ra2, dec2):
+    """Khoảng cách góc (arcsec) và góc vị trí PA (độ, tính từ hướng Bắc sang Đông) từ điểm 1 tới điểm 2."""
+    a1, d1, a2, d2 = np.radians([ra1, dec1, ra2, dec2])
+    da = a2 - a1
+    x = np.cos(d1) * np.sin(d2) - np.sin(d1) * np.cos(d2) * np.cos(da)
+    y = np.cos(d2) * np.sin(da)
+    sep = np.arctan2(np.hypot(x, y), np.sin(d1) * np.sin(d2) + np.cos(d1) * np.cos(d2) * np.cos(da))
+    return float(np.degrees(sep) * 3600.0), float(np.degrees(np.arctan2(y, x)) % 360.0)
+
+
+def fmt_dt(hours):
+    return f"{hours:.1f} giờ" if hours < 72 else f"{hours / 24:.1f} ngày"
 
 
 # =============================================================================
@@ -522,60 +732,95 @@ with st.sidebar:
         n_movers = st.slider("Số vật thể di chuyển", 1, 3, 3)
         seed = st.number_input("Seed bầu trời", 0, 9999, 42, help="Đổi seed để sinh bầu trời khác")
 
+    # Đọc trước metadata của T1 (band, độ phân giải góc, cube) để đồng bộ các điều khiển bên dưới
+    raw1 = raw2 = None
+    if che_do == SRC_DEMO and co_demo:
+        raw1, raw2 = DEMO_T1.read_bytes(), DEMO_T2.read_bytes()
+    elif che_do == SRC_UPLOAD and file_1 and file_2:
+        raw1, raw2 = file_1.getvalue(), file_2.getvalue()
+
+    meta, loi_doc = None, None
+    if raw1 is not None:
+        try:
+            meta = load_fits(raw1)
+        except ImportError:
+            loi_doc = "Chưa cài astropy. Chạy `pip install astropy reproject scipy scikit-image` để đọc file FITS."
+        except Exception as e:
+            loi_doc = f"Không đọc được file FITS T1: {e}"
+    pixel_scale = meta["pixel_scale"] if meta else PIXEL_SCALE_DEFAULT
+    la_cube = bool(meta and meta["n_planes"] > 1)
+
     st.divider()
     st.subheader("🧪 Tiền xử lý SPHEREx Level 2")
     tru_zodi = st.checkbox("Khử nền ánh sáng hoàng đạo (ZODI)", value=True,
-                           help="Trừ ma trận HDU ZODI khỏi IMAGE")
+                           help="Trừ ma trận HDU ZODI (hoặc BACKGROUND) khỏi ảnh khoa học")
     loc_flags = st.checkbox("Lọc mặt nạ tia vũ trụ (FLAGS)", value=True,
-                            help="Gán NaN cho pixel dính cờ lỗi phần cứng / tia vũ trụ (bitwise AND). "
-                                 "Bỏ qua cờ SOURCE nên các ngôi sao được giữ lại.")
+                            help="Gán NaN cho pixel dính cờ lỗi phần cứng / tia vũ trụ (bitwise AND) trước khi "
+                                 "chiếu lưới. Bỏ qua cờ SOURCE nên các ngôi sao được giữ lại.")
     st.caption("Chỉ áp dụng cho dữ liệu SPHEREx thật.")
 
     st.divider()
     st.subheader("🔬 Tham số vật lý")
-    dai_pho = st.selectbox("Dải bước sóng SPHEREx", [
-        "Band 1 (0.75 – 1.09 µm)", "Band 2 (1.10 – 1.62 µm)", "Band 3 (1.63 – 2.41 µm)",
-        "Band 4 (2.42 – 3.82 µm)", "Band 5 (3.83 – 4.41 µm)", "Band 6 (4.42 – 5.00 µm)"], index=0)
-    # Mặc định riêng cho dữ liệu SPHEREx thật có sẵn: 8σ và 45 px; còn lại: 5σ và 100 px
+    # Dải bước sóng: khóa theo header khi dùng FITS thật 2D; mở khi Mock hoặc FITS cube 3D
+    khoa_band = bool(meta) and not la_cube
+    band_idx = meta["band_idx"] if (meta and meta["band_idx"] is not None) else 0
+    dai_pho = st.selectbox("Dải bước sóng SPHEREx", BANDS, index=band_idx, disabled=khoa_band)
+    if khoa_band:
+        nguon_band = meta["band_src"] if meta["band_src"] else "header không có FILTER/BAND/WAVELEN, mặc định Band 1"
+        st.caption(f"Tự động khóa theo thông số FITS header ({nguon_band}).")
+    elif la_cube:
+        st.caption(f'FITS cube {meta["n_planes"]} kênh: band được chọn quyết định lát cắt đem phân tích.')
+    cube_index = BANDS.index(dai_pho) if la_cube else 0
+
+    # Mặc định cho dữ liệu SPHEREx thật có sẵn: 8σ; còn lại: 5σ
     mac_dinh_that = che_do == SRC_DEMO and co_demo
     nguong_sigma = st.slider("Ngưỡng lọc nhiễu (σ)", 1.0, 10.0, 8.0 if mac_dinh_that else 5.0, 0.5,
-                             help="Chỉ giữ các đốm trên ảnh trừ sáng hơn k lần độ nhiễu nền")
+                             help="Chỉ giữ các đỉnh trên ảnh trừ sáng hơn k lần độ nhiễu nền")
     st.caption("Ngưỡng thấp → bắt được vật thể mờ nhưng nhiều báo động giả. "
                "Mặc định 8σ cho dữ liệu thật, 5σ cho dữ liệu giả lập.")
-    ban_kinh = st.slider("Bán kính ghép cặp tối đa (pixel)", 20, 300, 45 if mac_dinh_that else 100, 5,
-                         help="Một đốm ở T1 chỉ được ghép với đốm ở T2 nằm trong bán kính này "
+
+    # Bán kính ghép cặp: 10-80 px; mặc định 45 px cho dữ liệu thật, 60 px cho mock (ảnh mock dịch tới 51 px)
+    kieu = "that" if meta else "mock"
+    if st.session_state.get("_kieu_ban_kinh") != kieu or "max_radius" not in st.session_state:
+        st.session_state["_kieu_ban_kinh"] = kieu
+        st.session_state["max_radius"] = R_DEFAULT_REAL if meta else R_DEFAULT_MOCK
+    max_radius = int(st.session_state["max_radius"])
+    st.session_state["max_radius"] = max_radius  # giữ giá trị khi nhãn thay đổi
+    ban_kinh = st.slider(f'Bán kính ghép cặp tối đa: {max_radius} px (~{max_radius * pixel_scale:.0f}")',
+                         10, 80, step=5, key="max_radius",
+                         help="Một đỉnh ở T1 chỉ được ghép với đỉnh ở T2 nằm trong bán kính này "
                               f"(và cách tối thiểu {MIN_SHIFT_PX:g} px)")
-    st.caption(f"{ban_kinh} px ≈ {ban_kinh * PIXEL_SCALE / 60:.1f} phút góc.")
 
 # =============================================================================
 # 5. NẠP DỮ LIỆU & CHẠY PHÁT HIỆN
 # =============================================================================
 dang_mock, wcs, valid, info = True, None, None, None
 
-raw1 = raw2 = None
-if che_do == SRC_DEMO and co_demo:
-    raw1, raw2 = DEMO_T1.read_bytes(), DEMO_T2.read_bytes()
-elif che_do == SRC_UPLOAD and file_1 and file_2:
-    raw1, raw2 = file_1.getvalue(), file_2.getvalue()
-
-if raw1 is not None:
+if loi_doc:
+    st.error(f"{loi_doc} Đang hiển thị dữ liệu giả lập.")
+elif meta is not None:
     try:
-        img1, img2, valid, info, header1 = prepare_real(raw1, raw2, tru_zodi, loc_flags)
+        img1, img2, valid, info, header1 = prepare_real(raw1, raw2, tru_zodi, loc_flags, cube_index)
         wcs = _celestial_wcs(header1)
         dang_mock = False
     except ImportError:
-        st.error("Chưa cài astropy. Chạy `pip install astropy reproject` để đọc file FITS. "
+        st.error("Thiếu thư viện. Chạy `pip install astropy reproject scipy scikit-image`. "
                  "Đang hiển thị dữ liệu giả lập.")
     except Exception as e:
         st.error(f"Không xử lý được file FITS: {e} Đang hiển thị dữ liệu giả lập.")
 
 if dang_mock:
+    pixel_scale = PIXEL_SCALE_DEFAULT
     if che_do == SRC_MOCK:
         img1, img2 = generate_mock_data(int(seed), int(n_movers))
     else:
         img1, img2 = generate_mock_data()
         if che_do == SRC_UPLOAD and not (file_1 and file_2):
             st.info("Hãy upload đủ 2 file T1 và T2. Trong lúc chờ, giao diện hiển thị dữ liệu giả lập.")
+    dt_hours, dt_la_gia_dinh = MOCK_DT_H, False
+else:
+    pixel_scale = info["pixel_scale"]
+    dt_hours, dt_la_gia_dinh = info["dt_hours"], info["dt_src"] != "header"
 
 try:
     diff, sigma, cands, n_dipole = detect(img1, img2, float(nguong_sigma), float(ban_kinh), valid)
@@ -583,28 +828,39 @@ except ValueError as e:
     st.error(str(e))
     st.stop()
 
-movers = [c for c in cands if c["loai"] == "Di chuyển"]
-for i, c in enumerate(cands, 1):
-    c["id"] = f"Cand-X{i}"
-
-# Top-N để vẽ: ưu tiên vật thể "Di chuyển", còn chỗ thì thêm ứng viên khác; đều theo snr giảm dần
-movers_ve = movers[:TOP_N]
-cands_ve = movers_ve + [c for c in cands if c["loai"] != "Di chuyển"][:TOP_N - len(movers_ve)]
-
 
 def pix2sky(x, y):
-    """Pixel -> (RA, Dec) độ. Mock dùng WCS tuyến tính giả định quanh (180.25, 45.10)."""
+    """Pixel -> (RA, Dec) độ theo WCS của T1. Mock dùng WCS tuyến tính giả định quanh (180.25, 45.10)."""
     if wcs is not None:
         ra, dec = wcs.all_pix2world(x, y, 0)
         return float(ra), float(dec)
     cy, cx = (np.array(img1.shape) - 1) / 2
-    dec = 45.10 + (y - cy) * PIXEL_SCALE / 3600
-    ra = 180.25 - (x - cx) * PIXEL_SCALE / 3600 / np.cos(np.radians(45.10))
+    dec = 45.10 + (y - cy) * pixel_scale / 3600
+    ra = 180.25 - (x - cx) * pixel_scale / 3600 / np.cos(np.radians(45.10))
     return float(ra), float(dec)
 
 
+# Tọa độ thiên cầu, khoảng cách góc, góc vị trí và vận tốc góc biểu kiến cho từng ứng viên
+for i, c in enumerate(cands, 1):
+    c["id"] = f"Cand-X{i}"
+    c["ra1"] = c["dec1"] = c["ra2"] = c["dec2"] = c["sep"] = c["pa"] = c["vel"] = None
+    if not np.isnan(c["x1"]):
+        c["ra1"], c["dec1"] = pix2sky(c["x1"], c["y1"])
+    if not np.isnan(c["x2"]):
+        c["ra2"], c["dec2"] = pix2sky(c["x2"], c["y2"])
+    if c["loai"] == LOAI_MOVE:
+        c["sep"], c["pa"] = sep_pa(c["ra1"], c["dec1"], c["ra2"], c["dec2"])
+        c["vel"] = c["sep"] / dt_hours if dt_hours > 0 else None
+
+movers = [c for c in cands if c["loai"] == LOAI_MOVE]
+
+# Top-N để vẽ: ưu tiên vật thể "Di chuyển", còn chỗ thì thêm ứng viên khác; đều theo snr giảm dần
+movers_ve = movers[:TOP_N]
+cands_ve = movers_ve + [c for c in cands if c["loai"] != LOAI_MOVE][:TOP_N - len(movers_ve)]
+
+
 # =============================================================================
-# 6. TIÊU ĐỀ & THẺ SỐ LIỆU
+# 6. TIÊU ĐỀ, THANH TRẠNG THÁI & THẺ SỐ LIỆU
 # =============================================================================
 badge = '<span class="badge mock">DỮ LIỆU GIẢ LẬP</span>' if dang_mock else '<span class="badge real">DỮ LIỆU THẬT</span>'
 st.markdown(
@@ -614,7 +870,7 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
-# Trạng thái tiền xử lý (chỉ với dữ liệu thật)
+# Thanh trạng thái tổng hợp (chỉ với dữ liệu thật)
 if info is not None:
     zodi_txt = "đã trừ" if info["zodi"] else ("tắt" if not tru_zodi else "file thiếu HDU ZODI")
     if info["flags_pct"] is not None:
@@ -622,33 +878,48 @@ if info is not None:
                      f'{info["flags_src"]}, giữ SOURCE')
     else:
         flags_txt = "tắt" if not loc_flags else "file thiếu HDU FLAGS"
-    wcs_txt = {"ok": "đã chiếu T2 → lưới T1", "no_wcs": "không có WCS, trừ thẳng theo pixel",
-               "no_reproject": "chưa cài reproject, trừ thẳng theo pixel"}[info["wcs"]]
-    st.caption(f'**ZODI:** {zodi_txt} · **FLAGS:** {flags_txt} · **WCS:** {wcs_txt} · '
-               f'**Vùng hợp lệ:** {info["valid_pct"]:.1f}% ảnh')
+    wcs_txt = {"ok": "đã chiếu T2 → lưới T1", "no_wcs": "không có WCS, so thẳng theo pixel",
+               "no_reproject": "chưa cài reproject, so thẳng theo pixel"}[info["wcs"]]
+    reg_txt = {"applied": "đã dịch", "small": "dưới 0.03 px, không cần dịch",
+               "too_big": "vượt 15 px, KHÔNG dịch", "rejected": "không cải thiện độ khớp, KHÔNG dịch",
+               "failed": "không đo được", "no_skimage": "bỏ qua (chưa cài scikit-image)",
+               "no_scipy": "bỏ qua (chưa cài scipy)", "none": "bỏ qua"}[info["reg"]]
+    st.caption(f'**ZODI:** {zodi_txt} · **FLAGS:** {flags_txt} · **WCS Macro:** {wcs_txt} · '
+               f'**WCS Sub-pixel:** dx = {info["dx"]:+.2f} px, dy = {info["dy"]:+.2f} px '
+               f'({info["shift_arcsec"]:.2f}″; {reg_txt})')
     if "scale_raw" in info:
-        scale_txt = f'T2/T1 = {info["scale"]:.3f} (trung vị trên {info["n_bright"]} sao sáng chung)'
+        scale_txt = f'{info["scale"]:.3f} (trung vị trên {info["n_bright"]} sao sáng chung)'
     else:
-        scale_txt = f'không chỉnh (chỉ có {info["n_bright"]} sao sáng chung)'
+        scale_txt = "không chỉnh (không đủ sao sáng chung chưa bão hòa)"
     if info["edge"] is None:
         mask_txt = "bỏ qua (chưa cài scipy)"
     else:
-        mask_txt = (f'gọt biên {EDGE_PX} px, che hào quang {info["n_sat"]} sao cực sáng '
-                    f'({info["halo_pct"]:.1f}% ảnh)')
-    st.caption(f'**Tỷ lệ quang thông:** {scale_txt} · **Mặt nạ:** {mask_txt}')
-    if info["halo_pct"] > 25:
-        st.warning(f'Mặt nạ hào quang đang che {info["halo_pct"]:.0f}% ảnh. Nếu đang tắt lọc FLAGS, các tia vũ trụ '
-                   'chưa bị che sẽ bị coi nhầm là tâm sao cực sáng - hãy bật lại lọc FLAGS.')
+        mask_txt = f'{info["halo_pct"]:.1f}% khung hình ({info["n_sat"]} sao cực sáng), gọt biên {EDGE_PX} px'
+    dt_txt = fmt_dt(info["dt_hours"]) + ("" if info["dt_src"] == "header" else " (GIẢ ĐỊNH, header thiếu mốc thời gian)")
+    st.caption(f'**Quang thông T2/T1:** {scale_txt} · **Che hào quang:** {mask_txt} · '
+               f'**Vùng hợp lệ:** {info["valid_pct"]:.1f}% · **Δt:** {dt_txt} · '
+               f'**Tỷ lệ ảnh:** {info["pixel_scale"]:.2f}″/px ({info["pixel_scale_src"]})')
+
+    if not loc_flags:
+        st.warning("Đang tắt lọc FLAGS: các tia vũ trụ chưa bị che sẽ xuất hiện như những đỉnh sáng đơn lẻ "
+                   "và có thể bị ghép nhầm thành vật thể di chuyển.")
+    if info["reg"] == "no_skimage":
+        st.warning("Chưa cài `scikit-image` nên CHƯA tinh chỉnh căn chỉnh dưới pixel. Chạy `pip install scikit-image`.")
     if info["edge"] is None:
-        st.warning("Chưa cài `scipy` nên CHƯA gọt biên và che hào quang sao sáng. Chạy `pip install scipy`.")
+        st.warning("Chưa cài `scipy` nên CHƯA tinh chỉnh dưới pixel, gọt biên và che hào quang. Chạy `pip install scipy`.")
+    if info["reg"] in ("too_big", "rejected"):
+        st.warning("Phép đo lệch dưới pixel không đáng tin (quá lớn hoặc không làm hai ảnh khớp hơn) nên không được áp dụng.")
     if "scale_raw" in info and not (SCALE_CLIP[0] < info["scale_raw"] < SCALE_CLIP[1]):
         st.warning(f'Tỷ lệ quang thông đo được là {info["scale_raw"]:.2f}, nằm ngoài khoảng '
                    f'{SCALE_CLIP[0]}–{SCALE_CLIP[1]} nên đã bị cắt về biên. Hai ảnh có thể chụp ở '
                    'bước sóng quá khác nhau để so sánh trực tiếp.')
+    if info["halo_pct"] >= HALO_MAX_PCT:
+        st.warning(f'Mặt nạ hào quang vẫn che {info["halo_pct"]:.0f}% khung hình dù đã nâng ngưỡng. '
+                   'Nếu đang tắt lọc FLAGS, hãy bật lại.')
     if info["wcs"] == "no_reproject":
-        st.warning("Chưa cài thư viện `reproject` nên hai ảnh CHƯA được đồng bộ WCS. Chạy `pip install reproject`.")
+        st.warning("Chưa cài thư viện `reproject` nên hai ảnh CHƯA được chiếu về cùng lưới WCS. Chạy `pip install reproject`.")
     elif info["wcs"] == "no_wcs":
-        st.warning("Ít nhất một file không có WCS hợp lệ nên hai ảnh CHƯA được đồng bộ tọa độ.")
+        st.warning("Ít nhất một file không có WCS hợp lệ nên hai ảnh CHƯA được chiếu về cùng lưới tọa độ.")
     if info["flags_pct"] is not None and max(info["flags_pct"]) > 10:
         st.warning("Mặt nạ FLAGS đang che hơn 10% ảnh dù đã bỏ qua cờ SOURCE. "
                    "Hãy kiểm tra định nghĩa bit trong header FLAGS của file.")
@@ -657,15 +928,23 @@ m1, m2, m3, m4 = st.columns(4)
 m1.metric("Vật thể di chuyển", len(movers))
 m2.metric("Nguồn chỉ đổi độ sáng", len(cands) - len(movers))
 m3.metric("Nhiễu ảnh trừ (1σ)", f"{sigma:.3g}")
-m4.metric("Dịch chuyển lớn nhất",
-          f'{max((c["shift_px"] for c in movers), default=0) * PIXEL_SCALE:.0f}″')
+m4.metric("Dịch chuyển lớn nhất", f'{max((c["sep"] for c in movers), default=0):.0f}″')
 
 
 # =============================================================================
 # 7. HÀM VẼ
 # =============================================================================
+def _khoang_hien_thi(img):
+    """Khoảng giá trị hiển thị (5% - 99.7%), an toàn với ảnh toàn NaN."""
+    v = img[np.isfinite(img)]
+    if v.size == 0:
+        return 0.0, 1.0
+    vmin, vmax = np.percentile(v, [5, 99.7])
+    return float(vmin), float(vmax if vmax > vmin else vmin + 1.0)
+
+
 def show_sky(ax, img, title):
-    vmin, vmax = np.nanpercentile(img, [5, 99.7])
+    vmin, vmax = _khoang_hien_thi(img)
     ax.imshow(img, cmap="magma", origin="lower", vmin=vmin, vmax=vmax)
     ax.set_title(title, color=TEXT, fontsize=10, pad=8)
     ax.set_xlabel("x (pixel)"); ax.set_ylabel("y (pixel)")
@@ -681,7 +960,7 @@ R = max(4.0, img1.shape[0] / 22)  # bán kính vòng khoanh theo cỡ ảnh
 if dang_mock:
     tieu_de_t2 = "T2 · Sau 6 tháng"
 else:
-    tieu_de_t2 = "T2 · Đã chiếu về lưới T1" if info["wcs"] == "ok" else "T2 · Ảnh sau"
+    tieu_de_t2 = "T2 · Đã căn chỉnh về lưới T1" if info["wcs"] == "ok" else "T2 · Ảnh sau"
 
 # =============================================================================
 # 8. KHU VỰC CHÍNH
@@ -711,11 +990,12 @@ with tab_so_sanh:
     with c3:
         fig, ax = plt.subplots(figsize=(4.4, 4.4))
         lim = max(8 * sigma, float(nguong_sigma) * sigma * 1.5)
-        ax.imshow(diff - np.nanmedian(diff), cmap=CMAP_DIFF, origin="lower", vmin=-lim, vmax=lim)
+        nen_diff = float(np.nanmedian(diff)) if np.isfinite(diff).any() else 0.0
+        ax.imshow(diff - nen_diff, cmap=CMAP_DIFF, origin="lower", vmin=-lim, vmax=lim)
         ax.set_title("T2 − T1 · Ứng viên", color=TEXT, fontsize=10, pad=8)
         ax.set_xlabel("x (pixel)"); ax.set_ylabel("y (pixel)")
         for c in cands_ve:
-            if c["loai"] == "Di chuyển":
+            if c["loai"] == LOAI_MOVE:
                 ax.add_patch(plt.Circle((c["x1"], c["y1"]), R, color=C_T1, fill=False, lw=1.2, ls="--"))
                 ax.add_patch(plt.Circle((c["x2"], c["y2"]), R, color=C_HIT, fill=False, lw=2))
                 ax.annotate("", xy=(c["x2"], c["y2"]), xytext=(c["x1"], c["y1"]),
@@ -731,7 +1011,7 @@ with tab_so_sanh:
 
     st.markdown(
         f'<div class="legend">'
-        f'<span><i class="dot" style="background:{C_T1}"></i>Vị trí ở T1 (đốm âm)</span>'
+        f'<span><i class="dot" style="background:{C_T1}"></i>Vị trí ở T1 (đỉnh âm)</span>'
         f'<span><i class="dot" style="background:{C_HIT}"></i>Vị trí ở T2 – ứng viên di chuyển</span>'
         f'<span><i class="dot" style="background:{C_VAR}"></i>Chỉ đổi độ sáng, không di chuyển</span>'
         f'</div>', unsafe_allow_html=True)
@@ -739,7 +1019,7 @@ with tab_so_sanh:
         st.caption(f"Biểu đồ chỉ vẽ {len(cands_ve)}/{len(cands)} ứng viên có độ tin cậy cao nhất "
                    "(ưu tiên vật thể di chuyển). Danh sách đầy đủ nằm ở tab Dữ liệu ứng viên.")
 
-    loc_txt = f" Đã loại **{n_dipole}** dư ảnh sao tĩnh (dịch chuyển < {MIN_SHIFT_PX:g} px)." if n_dipole else ""
+    loc_txt = f" Đã loại **{n_dipole}** lưỡng cực sao tĩnh (dịch chuyển < {MIN_SHIFT_PX:g} px)." if n_dipole else ""
     if movers:
         st.success(f"Lọc ở ngưỡng {nguong_sigma}σ, dịch chuyển {MIN_SHIFT_PX:g}–{ban_kinh} px: "
                    f"tìm thấy **{len(movers)}** vật thể di chuyển (|Δ độ sáng| ≤ {MAX_DFLUX_PCT:g}%).{loc_txt}")
@@ -764,7 +1044,7 @@ with tab_time_lapse:
     def draw_frame(p):
         t = p / 100
         fig, ax = plt.subplots(figsize=(7.5, 5))
-        vmin, vmax = np.nanpercentile(img1, [5, 99.7])
+        vmin, vmax = _khoang_hien_thi(img1)
         ax.imshow(img2 if p == 100 else img1,
                   cmap="gray", origin="lower", vmin=vmin, vmax=vmax, alpha=.45)
         for c in movers_ve:
@@ -802,22 +1082,29 @@ with tab_time_lapse:
 with tab_du_lieu:
     st.subheader("Bảng ứng viên (RA/Dec)")
     if dang_mock:
-        st.caption("Tọa độ RA/Dec dưới đây tính từ một WCS giả định cho dữ liệu mock, không ứng với bầu trời thật.")
-    elif wcs is None:
-        st.caption("File FITS không có WCS hợp lệ nên RA/Dec dùng WCS giả định – chỉ tin cột pixel.")
+        st.caption("RA/Dec tính từ một WCS giả định cho dữ liệu mock (không ứng với bầu trời thật); "
+                   f"vận tốc góc tính với Δt = {fmt_dt(dt_hours)}.")
     else:
-        st.caption("RA/Dec tính từ WCS của ảnh T1.")
+        nguon_toa_do = "WCS của ảnh T1" if wcs is not None else "WCS giả định (file thiếu WCS, chỉ tin cột pixel)"
+        st.caption(f"RA/Dec tính từ {nguon_toa_do}; vận tốc góc = Δθ / Δt với Δt = {fmt_dt(dt_hours)}.")
+        if dt_la_gia_dinh:
+            st.warning(f"Header FITS không có mốc thời gian (MJD-OBS / DATE-OBS) nên Δt = {DT_FALLBACK_H} giờ là "
+                       "giá trị GIẢ ĐỊNH. Cột vận tốc góc vì thế chỉ mang tính minh họa, không phải số đo.")
+
+    def lam_tron(v, n):
+        return None if v is None else round(v, n)
 
     rows = []
     for c in cands:
         x = c["x2"] if not np.isnan(c["x2"]) else c["x1"]
         y = c["y2"] if not np.isnan(c["y2"]) else c["y1"]
-        ra, dec = pix2sky(x, y)
         rows.append({
             "Mã ứng viên": c["id"], "Phân loại": c["loai"],
-            "RA (độ)": round(ra, 5), "Dec (độ)": round(dec, 5),
-            "x (px)": round(x, 1), "y (px)": round(y, 1),
-            "Độ dịch chuyển (arcsec)": round(c["shift_px"] * PIXEL_SCALE, 1),
+            "RA1 (độ)": lam_tron(c["ra1"], 5), "Dec1 (độ)": lam_tron(c["dec1"], 5),
+            "RA2 (độ)": lam_tron(c["ra2"], 5), "Dec2 (độ)": lam_tron(c["dec2"], 5),
+            "x (px)": round(x, 2), "y (px)": round(y, 2),
+            "Δθ (arcsec)": lam_tron(c["sep"], 1), "PA (độ)": lam_tron(c["pa"], 1),
+            "Vận tốc góc (arcsec/giờ)": lam_tron(c["vel"], 3),
             "Δ Độ sáng (%)": None if np.isnan(c["dflux"]) else round(c["dflux"], 1),
             "Độ tin cậy (σ)": round(c["snr"], 1),
         })
