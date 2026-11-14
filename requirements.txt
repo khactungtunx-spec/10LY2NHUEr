@@ -1,10 +1,9 @@
-streamlit
+﻿streamlit
 numpy
 pandas
 matplotlib
 astropy
 reproject
 scipy
-fastapi
-uvicorn[standard]
-python-multipart
+scikit-image
+astroquery
