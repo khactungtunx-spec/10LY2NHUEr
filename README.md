@@ -46,3 +46,7 @@ streamlit run app.py
 - **SPHEREx Mission (NASA / JPL-Caltech):**
   > "This publication makes use of data products from the Spectro-Photometer for the History of the Universe, Epoch of Reionization and Ices Explorer (SPHEREx), which is a joint project of the Jet Propulsion Laboratory and the California Institute of Technology, and is funded by the National Aeronautics and Space Administration."
 - **Archive & Astronomical Catalogs:** Level 2 FITS data products accessed via the **NASA/IPAC Infrared Science Archive (IRSA)**; astrometric cross-matching powered by the **SIMBAD** database, operated at CDS, Strasbourg, France.
+
+
+*## AI Usage Disclosure
+Generative AI assistants (Google Gemini, Anthropic Claude, Antigravity IDE) were used solely to assist with Python/Streamlit debugging, UI/CSS styling, and documentation refinement. All astrophysics algorithms, data processing logic, and candidate validations were developed and verified by Team 10LY2NHUEr.
