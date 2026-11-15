@@ -1117,11 +1117,11 @@ if dung_simbad and co_toa_do_that:
             ra, dec = (cand["ra2"], cand["dec2"]) if cand["ra2"] is not None else (cand["ra1"], cand["dec1"])
             return query_simbad_catalog(ra, dec, SIMBAD_RADIUS)
 
-        with st.spinner(f"Đang đối chiếu song song {len(can_tra)} ứng viên với SIMBAD..."):
-            with ThreadPoolExecutor(max_workers=8) as pool:
-                ket_qua = list(pool.map(_tra_mot_diem, can_tra))
-            for c, res in zip(can_tra, ket_qua):
-                c["simbad"] = res
+        st.toast(f"Đang đối chiếu song song {len(can_tra)} ứng viên với SIMBAD...", icon="🔭")
+        with ThreadPoolExecutor(max_workers=8) as pool:
+            ket_qua = list(pool.map(_tra_mot_diem, can_tra))
+        for c, res in zip(can_tra, ket_qua):
+            c["simbad"] = res
 
 KHONG_KET_QUA = (SIMBAD_NONE, SIMBAD_OFFLINE, SIMBAD_SKIPPED, SIMBAD_OFF, SIMBAD_NO_LIB, SIMBAD_NA)
 n_khop = sum(c["simbad"] not in KHONG_KET_QUA for c in cands)
