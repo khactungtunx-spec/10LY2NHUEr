@@ -1417,3 +1417,14 @@ with tab_du_lieu:
 
     st.download_button("📥 Tải file CSV", data=df.to_csv(index=False).encode("utf-8-sig"),
                        file_name="candidates.csv", mime="text/csv", disabled=df.empty)
+st.divider()
+st.caption("Dữ liệu khoa học: NASA / JPL-Caltech SPHEREx Mission & NASA/IPAC Infrared Science Archive (IRSA) · Đối chiếu danh mục: CDS SIMBAD.")
+
+st.divider()
+st.caption(
+    """Ấn phẩm này sử dụng dữ liệu từ Kính viễn vọng Quang phổ Kế hoạch Khám phá Lịch sử Vũ trụ, Kỷ nguyên Tái ion hóa và Băng (SPHEREx), một dự án hợp tác giữa Phòng thí nghiệm Phản lực (Jet Propulsion Laboratory) và Viện Công nghệ California (Caltech), và được tài trợ bởi Cơ quan Hàng không và Vũ trụ Quốc gia (NASA).
+
+This publication makes use of data products from the Spectro-Photometer for the History of the Universe, Epoch of Reionization and Ices Explorer (SPHEREx), which is a joint project of the Jet Propulsion Laboratory and the California Institute of Technology, and is funded by the National Aeronautics and Space Administration.
+
+Kho lưu trữ: NASA/IPAC Infrared Science Archive (IRSA) ? Đối chiếu danh mục: CDS SIMBAD."""
+)

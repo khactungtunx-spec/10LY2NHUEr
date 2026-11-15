@@ -13,3 +13,11 @@ Pipeline phân tích dữ liệu hồng ngoại **SPHEREx Level 2** tự động
 ```bash
 pip install -r requirements.txt
 streamlit run app.py
+
+
+## Nguồn dữ liệu & Ghi công (Data Attribution)
+- **SPHEREx (NASA / JPL-Caltech):**
+  > "Ấn phẩm này sử dụng dữ liệu từ Kính viễn vọng Quang phổ Kế hoạch Khám phá Lịch sử Vũ trụ, Kỷ nguyên Tái ion hóa và Băng (SPHEREx), một dự án hợp tác giữa Phòng thí nghiệm Phản lực (Jet Propulsion Laboratory) và Viện Công nghệ California (Caltech), và được tài trợ bởi Cơ quan Hàng không và Vũ trụ Quốc gia (NASA)."
+  >
+  > *"This publication makes use of data products from the Spectro-Photometer for the History of the Universe, Epoch of Reionization and Ices Explorer (SPHEREx), which is a joint project of the Jet Propulsion Laboratory and the California Institute of Technology, and is funded by the National Aeronautics and Space Administration."*
+- **Kho lưu trữ & Danh mục đối chiếu:** Dữ liệu Level 2 khai thác qua **NASA/IPAC Infrared Science Archive (IRSA)**; đối chiếu tọa độ thiên thể qua cơ sở dữ liệu **SIMBAD** (CDS, Strasbourg, Pháp).
