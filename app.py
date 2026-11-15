@@ -193,7 +193,7 @@ if not st.session_state.tutorial_done:
         "Chào mừng bạn đến với hệ thống phân tích dữ liệu thiên văn của **10LY2NHUEr**. "
         "Để phát hiện vật thể di chuyển, hệ thống sẽ thực hiện 3 bước:"
     )
-
+    st.markdown("<style>[data-testid='stAlert'] *, [data-testid='stAlertContainer'] *, div[role='alert'] * { color: #0f172a !important; }</style>", unsafe_allow_html=True)
     col1, col2, col3 = st.columns(3)
     with col1:
         st.info(
@@ -1426,5 +1426,5 @@ st.caption(
 
 This publication makes use of data products from the Spectro-Photometer for the History of the Universe, Epoch of Reionization and Ices Explorer (SPHEREx), which is a joint project of the Jet Propulsion Laboratory and the California Institute of Technology, and is funded by the National Aeronautics and Space Administration.
 
-Kho lưu trữ: NASA/IPAC Infrared Science Archive (IRSA) ? Đối chiếu danh mục: CDS SIMBAD."""
+Kho lưu trữ: NASA/IPAC Infrared Science Archive (IRSA)  Đối chiếu danh mục: CDS SIMBAD."""
 )
