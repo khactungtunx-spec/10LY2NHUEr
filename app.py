@@ -1,9 +1,9 @@
 # -*- coding: utf-8 -*-
 """
-SPHEREx Sky Tracker - MVP giao diện Streamlit (NASA Space Apps)
-Cài:   pip install streamlit numpy pandas matplotlib astropy reproject scipy scikit-image astroquery
-Chạy:  streamlit run app.py --theme.base dark
-Dữ liệu demo (tùy chọn): data/spherex_t1_demo.fits, data/spherex_t2_demo.fits
+SPHEREx Sky Tracker - Streamlit MVP (NASA Space Apps Challenge)
+Install: pip install streamlit numpy pandas matplotlib astropy reproject scipy scikit-image astroquery
+Run:     streamlit run app.py --theme.base dark
+Demo data (optional): data/spherex_t1_demo.fits, data/spherex_t2_demo.fits
 """
 import io
 import re
@@ -42,18 +42,18 @@ DATA_DIR = Path(__file__).resolve().parent / "data"
 DEMO_T1 = DATA_DIR / "spherex_t1_demo.fits"
 DEMO_T2 = DATA_DIR / "spherex_t2_demo.fits"
 
-SRC_DEMO = "Dữ liệu SPHEREx thật (Có sẵn)"
-SRC_MOCK = "Giả lập (Mock)"
-SRC_UPLOAD = "Dữ liệu SPHEREx thật (Upload)"
+SRC_DEMO = "Real SPHEREx data (Bundled)"
+SRC_MOCK = "Simulated (Mock)"
+SRC_UPLOAD = "Real SPHEREx data (Upload)"
 
 BANDS = ["Band 1 (0.75 – 1.09 µm)", "Band 2 (1.10 – 1.62 µm)", "Band 3 (1.63 – 2.41 µm)",
          "Band 4 (2.42 – 3.82 µm)", "Band 5 (3.83 – 4.41 µm)", "Band 6 (4.42 – 5.00 µm)"]
 BAND_EDGES = [(0.75, 1.095), (1.095, 1.625), (1.625, 2.415), (2.415, 3.825), (3.825, 4.415), (4.415, 5.0)]
 
-LOAI_MOVE = "Di chuyển"
-LOAI_NEW = "Nguồn mới / Sáng lên"
-LOAI_GONE = "Mờ đi / Biến mất"
-LOAI_TRAIL = "Vệt tuyến tính (nghi vệ tinh)"
+LOAI_MOVE = "Moving"
+LOAI_NEW = "New source / Brightened"
+LOAI_GONE = "Faded / Disappeared"
+LOAI_TRAIL = "Linear trail (suspected satellite)"
 
 # Phát hiện & ghép cặp
 MIN_SHIFT_PX = 3.0    # dịch chuyển tối thiểu; nhỏ hơn = lưỡng cực của sao đứng yên
@@ -86,25 +86,25 @@ AP_TOL = 0.20            # coi là sao tĩnh nếu |F2 - F1| / max(|F1|, |F2|) <
 SIMBAD_TOP = 15          # số ứng viên tối đa được truy vấn
 SIMBAD_RADIUS = 30.0     # bán kính tìm kiếm (arcsec)
 SIMBAD_TIMEOUT = 5       # giây
-SIMBAD_NONE = "Vật thể lạ / Chưa định danh (New Candidate)"
-SIMBAD_OFFLINE = "Lỗi kết nối SIMBAD (Offline)"
-SIMBAD_SKIPPED = "Chưa truy vấn (Ngoài top 15)"
-SIMBAD_OFF = "Chưa truy vấn (đã tắt SIMBAD)"
-SIMBAD_NO_LIB = "Chưa cài astroquery"
-SIMBAD_NA = "Không áp dụng (tọa độ không phải bầu trời thật)"
+SIMBAD_NONE = "Unknown object / Unidentified (New Candidate)"
+SIMBAD_OFFLINE = "SIMBAD connection error (Offline)"
+SIMBAD_SKIPPED = "Not queried (outside top 15)"
+SIMBAD_OFF = "Not queried (SIMBAD disabled)"
+SIMBAD_NO_LIB = "astroquery not installed"
+SIMBAD_NA = "Not applicable (coordinates are not real sky positions)"
 OTYPE_LABELS = {
-    "*": "Sao", "Star": "Sao", "**": "Sao đôi", "V*": "Sao biến quang", "PM*": "Sao chuyển động riêng lớn",
-    "HPM*": "Sao chuyển động riêng lớn", "LP*": "Sao biến quang chu kỳ dài", "Mi*": "Sao biến quang kiểu Mira",
-    "RR*": "Sao biến quang RR Lyrae", "Ce*": "Sao biến quang Cepheid", "EB*": "Sao đôi che khuất",
-    "SB*": "Sao đôi quang phổ", "RG*": "Sao khổng lồ đỏ", "AB*": "Sao nhánh tiệm cận", "C*": "Sao carbon",
-    "WD*": "Sao lùn trắng", "BD*": "Sao lùn nâu", "LM*": "Sao khối lượng thấp", "Y*O": "Thiên thể sao trẻ",
-    "TT*": "Sao T Tauri", "Em*": "Sao vạch phát xạ", "G": "Thiên hà", "GiG": "Thiên hà trong nhóm",
-    "GiC": "Thiên hà trong cụm", "GiP": "Thiên hà trong cặp", "LSB": "Thiên hà độ sáng bề mặt thấp",
-    "AGN": "Nhân thiên hà hoạt động", "QSO": "Nhân thiên hà hoạt động", "Sy1": "Nhân thiên hà hoạt động",
-    "Sy2": "Nhân thiên hà hoạt động", "SyG": "Nhân thiên hà hoạt động", "BLL": "Nhân thiên hà hoạt động",
-    "IR": "Nguồn hồng ngoại", "NIR": "Nguồn hồng ngoại", "MIR": "Nguồn hồng ngoại", "FIR": "Nguồn hồng ngoại",
-    "Rad": "Nguồn vô tuyến", "X": "Nguồn tia X", "UV": "Nguồn tử ngoại", "GlC": "Cụm sao cầu",
-    "OpC": "Cụm sao mở", "Cl*": "Cụm sao", "PN": "Tinh vân hành tinh", "HII": "Vùng HII", "SNR": "Tàn dư siêu tân tinh",
+    "*": "Star", "Star": "Star", "**": "Double star", "V*": "Variable star", "PM*": "High proper-motion star",
+    "HPM*": "High proper-motion star", "LP*": "Long-period variable", "Mi*": "Mira variable",
+    "RR*": "RR Lyrae variable", "Ce*": "Cepheid variable", "EB*": "Eclipsing binary",
+    "SB*": "Spectroscopic binary", "RG*": "Red giant", "AB*": "Asymptotic giant branch star", "C*": "Carbon star",
+    "WD*": "White dwarf", "BD*": "Brown dwarf", "LM*": "Low-mass star", "Y*O": "Young stellar object",
+    "TT*": "T Tauri star", "Em*": "Emission-line star", "G": "Galaxy", "GiG": "Galaxy in group",
+    "GiC": "Galaxy in cluster", "GiP": "Galaxy in pair", "LSB": "Low surface brightness galaxy",
+    "AGN": "Active galactic nucleus", "QSO": "Active galactic nucleus", "Sy1": "Active galactic nucleus",
+    "Sy2": "Active galactic nucleus", "SyG": "Active galactic nucleus", "BLL": "Active galactic nucleus",
+    "IR": "Infrared source", "NIR": "Infrared source", "MIR": "Infrared source", "FIR": "Infrared source",
+    "Rad": "Radio source", "X": "X-ray source", "UV": "Ultraviolet source", "GlC": "Globular cluster",
+    "OpC": "Open cluster", "Cl*": "Star cluster", "PN": "Planetary nebula", "HII": "HII region", "SNR": "Supernova remnant",
 }
 
 # Căn chỉnh dưới pixel (tương quan pha)
@@ -188,35 +188,36 @@ if "tutorial_done" not in st.session_state:
     st.session_state.tutorial_done = False
 
 if not st.session_state.tutorial_done:
-    st.title("🚀 Hướng dẫn nhanh: SPHEREx Sky Tracker")
+    st.title("🚀 Quick Start Guide: SPHEREx Sky Tracker")
     st.markdown(
-        "Chào mừng bạn đến với hệ thống phân tích dữ liệu thiên văn của **10LY2NHUEr**. "
-        "Để phát hiện vật thể di chuyển, hệ thống sẽ thực hiện 3 bước:"
+        "Welcome to the astronomical data analysis system by **10LY2NHUEr**. "
+        "To detect moving objects, the pipeline runs in 3 steps:"
     )
     st.markdown("<style>[data-testid='stAlert'] > div, [data-testid='stAlertContainer'], div[role='alert'] { background-color: #1e293b !important; border: 1px solid #334155 !important; } [data-testid='stAlert'] *, [data-testid='stAlertContainer'] *, div[role='alert'] * { color: #f8fafc !important; }</style>", unsafe_allow_html=True)
     col1, col2, col3 = st.columns(3)
     with col1:
         st.info(
-        "**1. Nạp Dữ Liệu**\n\n"
-        "Sử dụng bộ dữ liệu quan sát SPHEREx thật khai thác từ kho lưu trữ NASA/IRSA, hoặc tải lên ảnh .FITS thủ công để khảo sát."
-    )
+            "**1. Load Data**\n\n"
+            "Use the bundled real SPHEREx observations retrieved from the NASA/IRSA archive, "
+            "or upload your own .FITS images to explore."
+        )
     with col2:
         st.warning(
-            "**2. Đồng Bộ & Lọc Nhiễu**\n\n"
-            "Hệ thống tự động căn chỉnh tọa độ WCS và trừ ảnh. "
-            "Bạn có thể kéo thanh trượt Sigma để lọc nhiễu hạt."
+            "**2. Align & Denoise**\n\n"
+            "The pipeline automatically registers both epochs using their WCS and subtracts the images. "
+            "Drag the Sigma slider to suppress noise."
         )
     with col3:
         st.success(
-            "**3. Trích Xuất**\n\n"
-            "Nhận diện quỹ đạo nội suy và tải xuống bảng tọa độ RA/Dec của các ứng viên."
+            "**3. Extract**\n\n"
+            "Inspect the interpolated tracks and download the RA/Dec table of the candidates."
         )
 
     st.write("")
     try:
-        bat_dau = st.button("Bắt đầu 🌌", type="primary", width="stretch", key="btn_start")
+        bat_dau = st.button("Launch 🌌", type="primary", width="stretch", key="btn_start")
     except TypeError:  # Streamlit bản cũ chưa có tham số width
-        bat_dau = st.button("Bắt đầu 🌌", type="primary", use_container_width=True, key="btn_start")
+        bat_dau = st.button("Launch 🌌", type="primary", use_container_width=True, key="btn_start")
 
     if bat_dau:
         st.session_state.tutorial_done = True
@@ -382,7 +383,7 @@ def load_fits(raw):
             if sci is None:
                 sci = next((h for h in hdul if co_anh(h) and h.name.upper() not in ten_phu), None)
             if sci is None:
-                raise ValueError("Không tìm thấy ảnh (>= 2 chiều) trong file FITS.")
+                raise ValueError("No image (>= 2 dimensions) found in the FITS file.")
 
             data = np.array(sci.data)
             while data.ndim > 3:
@@ -412,7 +413,7 @@ def load_fits(raw):
             out["band_idx"], out["band_src"] = _band_from_headers(headers)
 
     # Độ phân giải góc đọc trực tiếp từ ma trận WCS
-    out["pixel_scale"], out["pixel_scale_src"] = PIXEL_SCALE_DEFAULT, "mặc định"
+    out["pixel_scale"], out["pixel_scale_src"] = PIXEL_SCALE_DEFAULT, "default"
     w = _celestial_wcs(out["header"])
     if w is not None:
         try:
@@ -438,9 +439,9 @@ def bad_pixel_mask(flags, flag_bits):
     Trả về (mảng bool, mô tả nguồn định nghĩa bit)."""
     bits = [flag_bits[n] for n in BAD_FLAG_NAMES if n in flag_bits]
     if bits:
-        mask_value, nguon = sum(1 << b for b in set(bits)), "theo header MSKN"
+        mask_value, nguon = sum(1 << b for b in set(bits)), "per MSKN header keywords"
     else:
-        mask_value, nguon = FALLBACK_BAD_MASK, "bit 0–19 mặc định"
+        mask_value, nguon = FALLBACK_BAD_MASK, "default bits 0–19"
     f = np.nan_to_num(np.asarray(flags, dtype=float)).astype(np.int64)
     return (f & mask_value) != 0, nguon
 
@@ -454,7 +455,7 @@ def _corr(a, b, m):
     return float((x * y).sum() / den) if den > 0 else -1.0
 
 
-@st.cache_data(show_spinner="Đang tiền xử lý và căn chỉnh WCS 2 bước…")
+@st.cache_data(show_spinner="Pre-processing and running two-step WCS registration…")
 def prepare_real(raw1, raw2, tru_zodi, loc_flags, cube_index=0):
     """Giai đoạn 1: tiền xử lý Level 2 -> chiếu lưới WCS (2A) -> tinh chỉnh dưới pixel (2B)
     -> cân bằng quang thông -> gọt biên -> che hào quang sao bão hòa.
@@ -512,7 +513,7 @@ def prepare_real(raw1, raw2, tru_zodi, loc_flags, cube_index=0):
                 info["wcs"] = "no_reproject"
         if footprint is None:
             if t1.shape != t2.shape:
-                raise ValueError(f"Không đồng bộ được WCS và kích thước hai ảnh khác nhau: {t1.shape} và {t2.shape}.")
+                raise ValueError(f"WCS alignment is unavailable and the two images differ in shape: {t1.shape} vs {t2.shape}.")
             footprint = phu = np.ones(t1.shape)
 
         phu = np.nan_to_num(phu) > 0.5
@@ -520,8 +521,9 @@ def prepare_real(raw1, raw2, tru_zodi, loc_flags, cube_index=0):
         ok2 = (np.nan_to_num(footprint) > 0.5) & np.isfinite(t2)   # pixel hợp lệ của riêng T2
         valid = ok1 & ok2
         if valid.sum() < 100:
-            raise ValueError("Gần như không còn pixel hợp lệ chung giữa T1 và T2 "
-                             "(hai ảnh không chồng lấn, hoặc mặt nạ FLAGS che gần hết - thử tắt lọc FLAGS).")
+            raise ValueError("Almost no valid pixels are shared between T1 and T2 "
+                             "(the images do not overlap, or the FLAGS mask covers nearly everything - "
+                             "try disabling FLAGS masking).")
 
         med1, s1 = clipped_stats(t1[valid])
         med2, s2 = clipped_stats(t2[valid])
@@ -580,7 +582,7 @@ def prepare_real(raw1, raw2, tru_zodi, loc_flags, cube_index=0):
                 info["reg"] = "no_skimage"
 
         if valid.sum() < 100:
-            raise ValueError("Gần như không còn pixel hợp lệ sau bước căn chỉnh.")
+            raise ValueError("Almost no valid pixels remain after registration.")
 
         # ---- 3a. Cân bằng tỷ lệ quang thông trên các sao sáng chung, chưa bão hòa ----
         d1, d2 = t1 - med1, t2 - med2
@@ -635,7 +637,7 @@ def prepare_real(raw1, raw2, tru_zodi, loc_flags, cube_index=0):
                 valid = valid & ~halo
 
         if valid.sum() < 100:
-            raise ValueError("Gần như không còn pixel hợp lệ sau khi gọt biên và che hào quang sao sáng.")
+            raise ValueError("Almost no valid pixels remain after edge trimming and bright-star halo masking.")
         info["valid_pct"] = float(valid.mean() * 100)
 
         # ---- 3d. Khớp PSF cực nhẹ cho T1: bù độ suy giảm đỉnh của T2 sau khi nội suy ----
@@ -686,7 +688,7 @@ def _find_peaks(v, nguong):
     Trả về: danh sách đỉnh, số gai bị loại (diện tích nhỏ), số đốm dẹt / kéo dài bị loại."""
     la_dinh = (v == _max_filter(v, PEAK_WIN)) & (v > nguong)
     if la_dinh.sum() > 50_000:
-        raise ValueError("Quá nhiều đỉnh vượt ngưỡng - hai ảnh có thể chưa được căn chỉnh, hãy tăng ngưỡng σ.")
+        raise ValueError("Too many peaks above threshold - the images may be misaligned; raise the σ threshold.")
     h, w = v.shape
     peaks, n_gai, n_det = [], 0, 0
     for y0, x0 in np.argwhere(la_dinh):
@@ -907,8 +909,8 @@ def _simbad_lookup(ra_deg, dec_deg, radius_arcsec):
         k = 0
     main_id = _txt(result[cols["main_id"]][k]) if "main_id" in cols else ""
     otype = _txt(result[cols["otype"]][k]) if "otype" in cols else ""
-    nhan = OTYPE_LABELS.get(otype, otype if otype else "chưa rõ loại")
-    return f'{main_id or "Không rõ tên"} ({nhan})'
+    nhan = OTYPE_LABELS.get(otype, otype if otype else "unclassified")
+    return f'{main_id or "Unnamed"} ({nhan})'
 
 
 def query_simbad_catalog(ra_deg: float, dec_deg: float, radius_arcsec: float = SIMBAD_RADIUS) -> str:
@@ -924,7 +926,7 @@ def query_simbad_catalog(ra_deg: float, dec_deg: float, radius_arcsec: float = S
 def simbad_ngan(text):
     """Nhãn rút gọn để ghi trên biểu đồ."""
     if text == SIMBAD_NONE:
-        return "Chưa định danh"
+        return "Unidentified"
     if text == SIMBAD_OFFLINE:
         return "SIMBAD offline"
     if text in (SIMBAD_SKIPPED, SIMBAD_OFF, SIMBAD_NO_LIB, SIMBAD_NA):
@@ -944,7 +946,7 @@ def sep_pa(ra1, dec1, ra2, dec2):
 
 
 def fmt_dt(hours):
-    return f"{hours:.1f} giờ" if hours < 72 else f"{hours / 24:.1f} ngày"
+    return f"{hours:.1f} h" if hours < 72 else f"{hours / 24:.1f} days"
 
 
 # =============================================================================
@@ -953,23 +955,23 @@ def fmt_dt(hours):
 co_demo = DEMO_T1.exists() and DEMO_T2.exists()
 
 with st.sidebar:
-    st.header("⚙️ Điều khiển đầu vào")
-    che_do = st.radio("Chế độ dữ liệu", [SRC_DEMO, SRC_MOCK, SRC_UPLOAD])
+    st.header("⚙️ Input Controls")
+    che_do = st.radio("Data source", [SRC_DEMO, SRC_MOCK, SRC_UPLOAD])
 
     file_1 = file_2 = None
     n_movers, seed = 3, 42
     if che_do == SRC_DEMO:
         if co_demo:
-            st.caption(f"Đã nạp `data/{DEMO_T1.name}` và `data/{DEMO_T2.name}`.")
+            st.caption(f"Loaded `data/{DEMO_T1.name}` and `data/{DEMO_T2.name}`.")
         else:
-            st.warning("Không tìm thấy 2 file demo trong thư mục `data/`. Đang dùng dữ liệu giả lập.")
+            st.warning("The two demo files were not found in `data/`. Using simulated data instead.")
     elif che_do == SRC_UPLOAD:
-        file_1 = st.file_uploader("Ảnh T1 (.fits)", type=["fits", "fit", "fz"])
-        file_2 = st.file_uploader("Ảnh T2 (.fits)", type=["fits", "fit", "fz"])
-        st.caption("Nếu cả hai file có WCS, ảnh T2 sẽ tự động được chiếu về lưới của T1.")
+        file_1 = st.file_uploader("T1 image (.fits)", type=["fits", "fit", "fz"])
+        file_2 = st.file_uploader("T2 image (.fits)", type=["fits", "fit", "fz"])
+        st.caption("If both files carry a WCS, T2 is automatically reprojected onto the T1 pixel grid.")
     else:
-        n_movers = st.slider("Số vật thể di chuyển", 1, 3, 3)
-        seed = st.number_input("Seed bầu trời", 0, 9999, 42, help="Đổi seed để sinh bầu trời khác")
+        n_movers = st.slider("Number of moving objects", 1, 3, 3)
+        seed = st.number_input("Sky seed", 0, 9999, 42, help="Change the seed to generate a different sky")
 
     # Đọc trước metadata của T1 (band, độ phân giải góc, cube) để đồng bộ các điều khiển bên dưới
     raw1 = raw2 = None
@@ -983,40 +985,40 @@ with st.sidebar:
         try:
             meta = load_fits(raw1)
         except ImportError:
-            loi_doc = "Chưa cài astropy. Chạy `pip install astropy reproject scipy scikit-image` để đọc file FITS."
+            loi_doc = "astropy is not installed. Run `pip install astropy reproject scipy scikit-image` to read FITS files."
         except Exception as e:
-            loi_doc = f"Không đọc được file FITS T1: {e}"
+            loi_doc = f"Could not read the T1 FITS file: {e}"
     pixel_scale = meta["pixel_scale"] if meta else PIXEL_SCALE_DEFAULT
     la_cube = bool(meta and meta["n_planes"] > 1)
 
     st.divider()
-    st.subheader("🧪 Tiền xử lý SPHEREx Level 2")
-    tru_zodi = st.checkbox("Khử nền ánh sáng hoàng đạo (ZODI)", value=True,
-                           help="Trừ ma trận HDU ZODI (hoặc BACKGROUND) khỏi ảnh khoa học")
-    loc_flags = st.checkbox("Lọc mặt nạ tia vũ trụ (FLAGS)", value=True,
-                            help="Gán NaN cho pixel dính cờ lỗi phần cứng / tia vũ trụ (bitwise AND) trước khi "
-                                 "chiếu lưới. Bỏ qua cờ SOURCE nên các ngôi sao được giữ lại.")
-    st.caption("Chỉ áp dụng cho dữ liệu SPHEREx thật.")
+    st.subheader("🧪 SPHEREx Level 2 Pre-processing")
+    tru_zodi = st.checkbox("Subtract zodiacal light background (ZODI)", value=True,
+                           help="Subtract the ZODI (or BACKGROUND) HDU from the science image")
+    loc_flags = st.checkbox("Mask cosmic rays & bad pixels (FLAGS)", value=True,
+                            help="Set pixels flagged as detector defects / cosmic-ray hits (bitwise AND) to NaN "
+                                 "before reprojection. The SOURCE flag is ignored, so stars are preserved.")
+    st.caption("Applies to real SPHEREx data only.")
 
     st.divider()
-    st.subheader("🔬 Tham số vật lý")
+    st.subheader("🔬 Physical Parameters")
     # Dải bước sóng: khóa theo header khi dùng FITS thật 2D; mở khi Mock hoặc FITS cube 3D
     khoa_band = bool(meta) and not la_cube
     band_idx = meta["band_idx"] if (meta and meta["band_idx"] is not None) else 0
-    dai_pho = st.selectbox("Dải bước sóng SPHEREx", BANDS, index=band_idx, disabled=khoa_band)
+    dai_pho = st.selectbox("SPHEREx wavelength band", BANDS, index=band_idx, disabled=khoa_band)
     if khoa_band:
-        nguon_band = meta["band_src"] if meta["band_src"] else "header không có FILTER/BAND/WAVELEN, mặc định Band 1"
-        st.caption(f"Tự động khóa theo thông số FITS header ({nguon_band}).")
+        nguon_band = meta["band_src"] if meta["band_src"] else "no FILTER/BAND/WAVELEN keyword in header, defaulting to Band 1"
+        st.caption(f"Locked automatically to the FITS header value ({nguon_band}).")
     elif la_cube:
-        st.caption(f'FITS cube {meta["n_planes"]} kênh: band được chọn quyết định lát cắt đem phân tích.')
+        st.caption(f'FITS cube with {meta["n_planes"]} planes: the selected band sets which plane is analyzed.')
     cube_index = BANDS.index(dai_pho) if la_cube else 0
 
     # Mặc định cho dữ liệu SPHEREx thật: 9σ; dữ liệu giả lập: 5σ
     mac_dinh_that = bool(meta)
-    nguong_sigma = st.slider("Ngưỡng lọc nhiễu (σ)", 1.0, 10.0, 9.0 if mac_dinh_that else 5.0, 0.5,
-                             help="Chỉ giữ các đỉnh trên ảnh trừ sáng hơn k lần độ nhiễu nền")
-    st.caption("Ngưỡng thấp → bắt được vật thể mờ nhưng nhiều báo động giả. "
-               "Mặc định 9σ cho dữ liệu thật, 5σ cho dữ liệu giả lập.")
+    nguong_sigma = st.slider("Detection threshold (σ)", 1.0, 10.0, 9.0 if mac_dinh_that else 5.0, 0.5,
+                             help="Keep only difference-image peaks brighter than k times the background noise")
+    st.caption("Lower threshold → fainter objects are recovered, at the cost of more false positives. "
+               "Default: 9σ for real data, 5σ for simulated data.")
 
     # Bán kính ghép cặp: 10-80 px; mặc định 45 px cho dữ liệu thật, 60 px cho mock (ảnh mock dịch tới 51 px)
     kieu = "that" if meta else "mock"
@@ -1025,16 +1027,16 @@ with st.sidebar:
         st.session_state["max_radius"] = R_DEFAULT_REAL if meta else R_DEFAULT_MOCK
     max_radius = int(st.session_state["max_radius"])
     st.session_state["max_radius"] = max_radius  # giữ giá trị khi nhãn thay đổi
-    ban_kinh = st.slider(f'Bán kính ghép cặp tối đa: {max_radius} px (~{max_radius * pixel_scale:.0f}")',
+    ban_kinh = st.slider(f'Maximum pairing radius: {max_radius} px (~{max_radius * pixel_scale:.0f}")',
                          10, 80, step=5, key="max_radius",
-                         help="Một đỉnh ở T1 chỉ được ghép với đỉnh ở T2 nằm trong bán kính này "
-                              f"(và cách tối thiểu {MIN_SHIFT_PX:g} px)")
+                         help="A T1 peak can only be paired with a T2 peak inside this radius "
+                              f"(and at least {MIN_SHIFT_PX:g} px away)")
 
     st.divider()
-    st.subheader("🔭 Đối chiếu danh mục")
-    dung_simbad = st.checkbox("Định danh tọa độ (RA, Dec) qua kho sao SIMBAD", value=False,
-                              help=f"Tra {SIMBAD_TOP} ứng viên tin cậy nhất trong bán kính {SIMBAD_RADIUS:g}″. "
-                                   "Cần kết nối Internet; chỉ áp dụng cho dữ liệu thật có WCS.")
+    st.subheader("🔭 Catalog Cross-match")
+    dung_simbad = st.checkbox("Identify (RA, Dec) positions with the SIMBAD database", value=False,
+                              help=f"Queries the {SIMBAD_TOP} most significant candidates within {SIMBAD_RADIUS:g}″. "
+                                   "Requires an Internet connection; applies only to real data with a WCS.")
 
 # =============================================================================
 # 5. NẠP DỮ LIỆU & CHẠY PHÁT HIỆN
@@ -1042,17 +1044,17 @@ with st.sidebar:
 dang_mock, wcs, valid, info = True, None, None, None
 
 if loi_doc:
-    st.error(f"{loi_doc} Đang hiển thị dữ liệu giả lập.")
+    st.error(f"{loi_doc} Showing simulated data instead.")
 elif meta is not None:
     try:
         img1, img2, valid, info, header1 = prepare_real(raw1, raw2, tru_zodi, loc_flags, cube_index)
         wcs = _celestial_wcs(header1)
         dang_mock = False
     except ImportError:
-        st.error("Thiếu thư viện. Chạy `pip install astropy reproject scipy scikit-image`. "
-                 "Đang hiển thị dữ liệu giả lập.")
+        st.error("Missing dependencies. Run `pip install astropy reproject scipy scikit-image`. "
+                 "Showing simulated data instead.")
     except Exception as e:
-        st.error(f"Không xử lý được file FITS: {e} Đang hiển thị dữ liệu giả lập.")
+        st.error(f"Could not process the FITS files: {e} Showing simulated data instead.")
 
 if dang_mock:
     pixel_scale = PIXEL_SCALE_DEFAULT
@@ -1061,7 +1063,7 @@ if dang_mock:
     else:
         img1, img2 = generate_mock_data()
         if che_do == SRC_UPLOAD and not (file_1 and file_2):
-            st.info("Hãy upload đủ 2 file T1 và T2. Trong lúc chờ, giao diện hiển thị dữ liệu giả lập.")
+            st.info("Please upload both the T1 and T2 files. Until then, simulated data is shown.")
     dt_hours, dt_la_gia_dinh = MOCK_DT_H, False
 else:
     pixel_scale = info["pixel_scale"]
@@ -1117,7 +1119,7 @@ if dung_simbad and co_toa_do_that:
             ra, dec = (cand["ra2"], cand["dec2"]) if cand["ra2"] is not None else (cand["ra1"], cand["dec1"])
             return query_simbad_catalog(ra, dec, SIMBAD_RADIUS)
 
-        st.toast(f"Đang đối chiếu song song {len(can_tra)} ứng viên với SIMBAD...", icon="🔭")
+        st.toast(f"Cross-matching {len(can_tra)} candidates with SIMBAD in parallel...", icon="🔭")
         with ThreadPoolExecutor(max_workers=8) as pool:
             ket_qua = list(pool.map(_tra_mot_diem, can_tra))
         for c, res in zip(can_tra, ket_qua):
@@ -1132,82 +1134,82 @@ n_offline = sum(c["simbad"] == SIMBAD_OFFLINE for c in cands)
 # =============================================================================
 # 6. TIÊU ĐỀ, THANH TRẠNG THÁI & THẺ SỐ LIỆU
 # =============================================================================
-badge = '<span class="badge mock">DỮ LIỆU GIẢ LẬP</span>' if dang_mock else '<span class="badge real">DỮ LIỆU THẬT</span>'
+badge = '<span class="badge mock">SIMULATED DATA</span>' if dang_mock else '<span class="badge real">REAL DATA</span>'
 st.markdown(
     f'<div class="hero"><h1>🌌 SPHEREx Sky Tracker</h1>'
-    f'<p>So sánh hai thời điểm quan sát để phát hiện thiên thể thay đổi vị trí '
+    f'<p>Comparing two observation epochs to detect celestial objects that change position '
     f'<span class="badge">Team 10LY2NHUEr</span>{badge}</p></div>',
     unsafe_allow_html=True,
 )
 
 # Thanh trạng thái tổng hợp (chỉ với dữ liệu thật)
 if info is not None:
-    zodi_txt = "đã trừ" if info["zodi"] else ("tắt" if not tru_zodi else "file thiếu HDU ZODI")
+    zodi_txt = "subtracted" if info["zodi"] else ("off" if not tru_zodi else "ZODI HDU missing from file")
     if info["flags_pct"] is not None:
-        flags_txt = (f'che {info["flags_pct"][0]:.1f}% (T1) / {info["flags_pct"][1]:.1f}% (T2) pixel, '
-                     f'{info["flags_src"]}, giữ SOURCE')
+        flags_txt = (f'{info["flags_pct"][0]:.1f}% (T1) / {info["flags_pct"][1]:.1f}% (T2) of pixels masked, '
+                     f'{info["flags_src"]}, SOURCE kept')
     else:
-        flags_txt = "tắt" if not loc_flags else "file thiếu HDU FLAGS"
-    wcs_txt = {"ok": "đã chiếu T2 → lưới T1", "no_wcs": "không có WCS, so thẳng theo pixel",
-               "no_reproject": "chưa cài reproject, so thẳng theo pixel"}[info["wcs"]]
-    reg_txt = {"applied": "đã dịch", "small": "dưới 0.03 px, không cần dịch",
-               "too_big": "vượt 15 px, KHÔNG dịch", "rejected": "không cải thiện độ khớp, KHÔNG dịch",
-               "failed": "không đo được", "no_skimage": "bỏ qua (chưa cài scikit-image)",
-               "no_scipy": "bỏ qua (chưa cài scipy)", "none": "bỏ qua"}[info["reg"]]
+        flags_txt = "off" if not loc_flags else "FLAGS HDU missing from file"
+    wcs_txt = {"ok": "T2 reprojected → T1 grid", "no_wcs": "no WCS, compared pixel-to-pixel",
+               "no_reproject": "reproject not installed, compared pixel-to-pixel"}[info["wcs"]]
+    reg_txt = {"applied": "shift applied", "small": "below 0.03 px, no shift needed",
+               "too_big": "exceeds 15 px, NOT applied", "rejected": "no improvement in alignment, NOT applied",
+               "failed": "could not be measured", "no_skimage": "skipped (scikit-image not installed)",
+               "no_scipy": "skipped (scipy not installed)", "none": "skipped"}[info["reg"]]
     st.caption(f'**ZODI:** {zodi_txt} · **FLAGS:** {flags_txt} · **WCS Macro:** {wcs_txt} · '
                f'**WCS Sub-pixel:** dx = {info["dx"]:+.2f} px, dy = {info["dy"]:+.2f} px '
                f'({info["shift_arcsec"]:.2f}″; {reg_txt})')
     if "scale_raw" in info:
-        scale_txt = f'{info["scale"]:.3f} (trung vị trên {info["n_bright"]} sao sáng chung)'
+        scale_txt = f'{info["scale"]:.3f} (median over {info["n_bright"]} common bright stars)'
     else:
-        scale_txt = "không chỉnh (không đủ sao sáng chung chưa bão hòa)"
+        scale_txt = "not applied (too few common unsaturated bright stars)"
     if info["edge"] is None:
-        mask_txt = "bỏ qua (chưa cài scipy)"
+        mask_txt = "skipped (scipy not installed)"
     else:
-        mask_txt = f'{info["halo_pct"]:.1f}% khung hình ({info["n_sat"]} sao cực sáng), gọt biên {EDGE_PX} px'
-    dt_txt = fmt_dt(info["dt_hours"]) + ("" if info["dt_src"] == "header" else " (GIẢ ĐỊNH, header thiếu mốc thời gian)")
-    st.caption(f'**Quang thông T2/T1:** {scale_txt} · **Che hào quang:** {mask_txt} · '
-               f'**Vùng hợp lệ:** {info["valid_pct"]:.1f}% · **Δt:** {dt_txt} · '
-               f'**Tỷ lệ ảnh:** {info["pixel_scale"]:.2f}″/px ({info["pixel_scale_src"]})')
+        mask_txt = f'{info["halo_pct"]:.1f}% of frame ({info["n_sat"]} very bright stars), {EDGE_PX} px edge trim'
+    dt_txt = fmt_dt(info["dt_hours"]) + ("" if info["dt_src"] == "header" else " (ASSUMED, no timestamp in header)")
+    st.caption(f'**Flux ratio T2/T1:** {scale_txt} · **Halo mask:** {mask_txt} · '
+               f'**Valid area:** {info["valid_pct"]:.1f}% · **Δt:** {dt_txt} · '
+               f'**Pixel scale:** {info["pixel_scale"]:.2f}″/px ({info["pixel_scale_src"]})')
 
     if not loc_flags:
-        st.warning("Đang tắt lọc FLAGS: các tia vũ trụ chưa bị che sẽ xuất hiện như những đỉnh sáng đơn lẻ "
-                   "và có thể bị ghép nhầm thành vật thể di chuyển.")
+        st.warning("FLAGS masking is off: unmasked cosmic-ray hits will show up as isolated bright peaks "
+                   "and may be mis-paired as moving objects.")
     if info["reg"] == "no_skimage":
-        st.warning("Chưa cài `scikit-image` nên CHƯA tinh chỉnh căn chỉnh dưới pixel. Chạy `pip install scikit-image`.")
+        st.warning("`scikit-image` is not installed, so sub-pixel registration was NOT applied. Run `pip install scikit-image`.")
     if info["edge"] is None:
-        st.warning("Chưa cài `scipy` nên CHƯA tinh chỉnh dưới pixel, gọt biên và che hào quang. Chạy `pip install scipy`.")
+        st.warning("`scipy` is not installed, so sub-pixel registration, edge trimming and halo masking were NOT applied. Run `pip install scipy`.")
     if info["reg"] in ("too_big", "rejected"):
-        st.warning("Phép đo lệch dưới pixel không đáng tin (quá lớn hoặc không làm hai ảnh khớp hơn) nên không được áp dụng.")
+        st.warning("The sub-pixel offset measurement is unreliable (too large, or it does not improve the alignment), so it was not applied.")
     if "scale_raw" in info and not (SCALE_CLIP[0] < info["scale_raw"] < SCALE_CLIP[1]):
-        st.warning(f'Tỷ lệ quang thông đo được là {info["scale_raw"]:.2f}, nằm ngoài khoảng '
-                   f'{SCALE_CLIP[0]}–{SCALE_CLIP[1]} nên đã bị cắt về biên. Hai ảnh có thể chụp ở '
-                   'bước sóng quá khác nhau để so sánh trực tiếp.')
+        st.warning(f'The measured flux ratio is {info["scale_raw"]:.2f}, outside the '
+                   f'{SCALE_CLIP[0]}–{SCALE_CLIP[1]} range, so it was clipped to the limit. The two images may have '
+                   'been taken at wavelengths too different for a direct comparison.')
     if info["halo_pct"] >= HALO_MAX_PCT:
-        st.warning(f'Mặt nạ hào quang vẫn che {info["halo_pct"]:.0f}% khung hình dù đã nâng ngưỡng. '
-                   'Nếu đang tắt lọc FLAGS, hãy bật lại.')
+        st.warning(f'The halo mask still covers {info["halo_pct"]:.0f}% of the frame even after raising the threshold. '
+                   'If FLAGS masking is off, turn it back on.')
     if info["wcs"] == "no_reproject":
-        st.warning("Chưa cài thư viện `reproject` nên hai ảnh CHƯA được chiếu về cùng lưới WCS. Chạy `pip install reproject`.")
+        st.warning("`reproject` is not installed, so the two images were NOT reprojected onto a common WCS grid. Run `pip install reproject`.")
     elif info["wcs"] == "no_wcs":
-        st.warning("Ít nhất một file không có WCS hợp lệ nên hai ảnh CHƯA được chiếu về cùng lưới tọa độ.")
+        st.warning("At least one file has no valid WCS, so the two images were NOT reprojected onto a common coordinate grid.")
     if info["flags_pct"] is not None and max(info["flags_pct"]) > 10:
-        st.warning("Mặt nạ FLAGS đang che hơn 10% ảnh dù đã bỏ qua cờ SOURCE. "
-                   "Hãy kiểm tra định nghĩa bit trong header FLAGS của file.")
+        st.warning("The FLAGS mask covers more than 10% of the image even with the SOURCE flag ignored. "
+                   "Check the bit definitions in the FLAGS header of the file.")
 
 # Thống kê các bộ lọc nhiễu giả (mọi chế độ dữ liệu)
-psf_txt = f" · **Khớp PSF T1:** σ = {PSF_MATCH_SIGMA:g} px" if (info is not None and info.get("psf_match")) else ""
-st.caption(f'**Bộ lọc:** Đã lọc {loc["trail"]} nhiễu vệt vệ tinh (chuỗi thẳng hàng) · {loc["elong"]} đốm dẹt / kéo dài · '
-           f'{loc["spike"]} gai dưới {MIN_AREA} pixel · {loc["veto"]} sao tĩnh (bảo toàn quang thông khẩu độ) · '
-           f'{loc["dipole"]} lưỡng cực{psf_txt}')
+psf_txt = f" · **T1 PSF matching:** σ = {PSF_MATCH_SIGMA:g} px" if (info is not None and info.get("psf_match")) else ""
+st.caption(f'**Filters:** rejected {loc["trail"]} satellite-trail artifacts (collinear chains) · {loc["elong"]} elongated blobs · '
+           f'{loc["spike"]} spikes smaller than {MIN_AREA} pixels · {loc["veto"]} static stars (aperture flux conserved) · '
+           f'{loc["dipole"]} dipoles{psf_txt}')
 if dung_simbad and co_toa_do_that:
-    st.caption(f'**SIMBAD:** {n_khop} ứng viên khớp danh mục · {n_la} vật thể lạ chưa định danh'
-               + (f' · {n_offline} lỗi kết nối' if n_offline else ''))
+    st.caption(f'**SIMBAD:** {n_khop} candidates matched to the catalog · {n_la} unidentified objects'
+               + (f' · {n_offline} connection errors' if n_offline else ''))
 
 m1, m2, m3, m4 = st.columns(4)
-m1.metric("Vật thể di chuyển", len(movers))
-m2.metric("Nguồn chỉ đổi độ sáng", len(don_le))
-m3.metric("Nhiễu ảnh trừ (1σ)", f"{sigma:.3g}")
-m4.metric("Dịch chuyển lớn nhất", f'{max((c["sep"] for c in movers), default=0):.0f}″')
+m1.metric("Moving objects", len(movers))
+m2.metric("Brightness-change-only sources", len(don_le))
+m3.metric("Difference-image noise (1σ)", f"{sigma:.3g}")
+m4.metric("Largest displacement", f'{max((c["sep"] for c in movers), default=0):.0f}″')
 
 
 # =============================================================================
@@ -1237,15 +1239,15 @@ def render(fig):
 
 R = max(4.0, img1.shape[0] / 22)  # bán kính vòng khoanh theo cỡ ảnh
 if dang_mock:
-    tieu_de_t2 = "T2 · Sau 6 tháng"
+    tieu_de_t2 = "T2 · 6 months later"
 else:
-    tieu_de_t2 = "T2 · Đã căn chỉnh về lưới T1" if info["wcs"] == "ok" else "T2 · Ảnh sau"
+    tieu_de_t2 = "T2 · Registered to T1 grid" if info["wcs"] == "ok" else "T2 · Second epoch"
 
 # =============================================================================
 # 8. KHU VỰC CHÍNH
 # =============================================================================
 tab_so_sanh, tab_time_lapse, tab_du_lieu = st.tabs(
-    ["🔍 So sánh & Trừ ảnh", "⏳ Nội suy thời gian", "📋 Dữ liệu ứng viên"])
+    ["🔍 Compare & Subtract", "⏳ Time Interpolation", "📋 Candidate Data"])
 
 # ---- TAB 1 ------------------------------------------------------------------
 with tab_so_sanh:
@@ -1254,7 +1256,7 @@ with tab_so_sanh:
 
     with c1:
         fig, ax = plt.subplots(figsize=(4.4, 4.4))
-        show_sky(ax, img1, "T1 · Ảnh gốc")
+        show_sky(ax, img1, "T1 · Reference epoch")
         for c in movers_ve:
             ax.add_patch(plt.Circle((c["x1"], c["y1"]), R, color=C_T1, fill=False, lw=1.2, ls="--"))
         render(fig)
@@ -1271,7 +1273,7 @@ with tab_so_sanh:
         lim = max(8 * sigma, float(nguong_sigma) * sigma * 1.5)
         nen_diff = float(np.nanmedian(diff)) if np.isfinite(diff).any() else 0.0
         ax.imshow(diff - nen_diff, cmap=CMAP_DIFF, origin="lower", vmin=-lim, vmax=lim)
-        ax.set_title("T2 − T1 · Ứng viên", color=TEXT, fontsize=10, pad=8)
+        ax.set_title("T2 − T1 · Candidates", color=TEXT, fontsize=10, pad=8)
         ax.set_xlabel("x (pixel)"); ax.set_ylabel("y (pixel)")
         for c in cands_ve:
             if c["loai"] == LOAI_MOVE:
@@ -1292,35 +1294,35 @@ with tab_so_sanh:
 
     st.markdown(
         f'<div class="legend">'
-        f'<span><i class="dot" style="background:{C_T1}"></i>Vị trí ở T1 (đỉnh âm)</span>'
-        f'<span><i class="dot" style="background:{C_HIT}"></i>Vị trí ở T2 – ứng viên di chuyển</span>'
-        f'<span><i class="dot" style="background:{C_VAR}"></i>Chỉ đổi độ sáng, không di chuyển</span>'
+        f'<span><i class="dot" style="background:{C_T1}"></i>Position at T1 (negative peak)</span>'
+        f'<span><i class="dot" style="background:{C_HIT}"></i>Position at T2 – moving-object candidate</span>'
+        f'<span><i class="dot" style="background:{C_VAR}"></i>Brightness change only, no motion</span>'
         f'</div>', unsafe_allow_html=True)
     if len(cands) > len(cands_ve):
-        st.caption(f"Biểu đồ chỉ vẽ {len(cands_ve)}/{len(cands)} ứng viên có độ tin cậy cao nhất "
-                   "(ưu tiên vật thể di chuyển). Danh sách đầy đủ nằm ở tab Dữ liệu ứng viên.")
+        st.caption(f"Only the {len(cands_ve)}/{len(cands)} most significant candidates are drawn "
+                   "(moving objects first). The full list is in the Candidate Data tab.")
 
     n_bo = loc["dipole"] + loc["spike"] + loc["elong"] + loc["veto"] + loc["trail"]
-    loc_txt = f" Các bộ lọc đã loại **{n_bo}** nhiễu giả (chi tiết ở dòng Bộ lọc phía trên)." if n_bo else ""
+    loc_txt = f" The filters rejected **{n_bo}** spurious detections (see the Filters line above)." if n_bo else ""
     if movers:
-        st.success(f"Lọc ở ngưỡng {nguong_sigma}σ, dịch chuyển {MIN_SHIFT_PX:g}–{ban_kinh} px: "
-                   f"tìm thấy **{len(movers)}** vật thể di chuyển (|Δ độ sáng| ≤ {MAX_DFLUX_PCT:g}%).{loc_txt}")
+        st.success(f"Threshold {nguong_sigma}σ, displacement {MIN_SHIFT_PX:g}–{ban_kinh} px: "
+                   f"found **{len(movers)}** moving object(s) (|Δ flux| ≤ {MAX_DFLUX_PCT:g}%).{loc_txt}")
     else:
-        st.warning(f"Không có vật thể di chuyển nào vượt ngưỡng {nguong_sigma}σ với dịch chuyển "
-                   f"{MIN_SHIFT_PX:g}–{ban_kinh} px.{loc_txt} Thử hạ ngưỡng hoặc tăng bán kính ghép cặp.")
+        st.warning(f"No moving object exceeds the {nguong_sigma}σ threshold with a displacement of "
+                   f"{MIN_SHIFT_PX:g}–{ban_kinh} px.{loc_txt} Try lowering the threshold or increasing the pairing radius.")
 
 # ---- TAB 2 ------------------------------------------------------------------
 with tab_time_lapse:
-    st.subheader("Mô phỏng chuyển động giữa T1 và T2")
+    st.subheader("Simulated motion between T1 and T2")
     st.warning(
-        "⚠️ **Cảnh báo khoa học:** SPHEREx chỉ quan sát tại hai thời điểm T1 và T2. Mọi vị trí ở giữa "
-        "là **nội suy tuyến tính** để minh họa, **không phải dữ liệu đo** và không phải quỹ đạo thật "
-        "(quỹ đạo thật là đường cong, cần tối thiểu 3 lần quan sát để xác định).")
+        "⚠️ **Scientific caveat:** SPHEREx observed this field only at the two epochs T1 and T2. Every position "
+        "in between is a **linear interpolation** for illustration, **not measured data** and not a real orbit "
+        "(a real orbit is curved and needs at least 3 observations to be determined).")
 
     cs, cb = st.columns([5, 1])
-    tien_do = cs.slider("Thời gian nội suy (0% = T1, 100% = T2)", 0, 100, 50, format="%d%%")
+    tien_do = cs.slider("Interpolated time (0% = T1, 100% = T2)", 0, 100, 50, format="%d%%")
     cb.write("")
-    play = cb.button("▶ Phát", help="Chạy hoạt ảnh từ T1 đến T2")
+    play = cb.button("▶ Play", help="Animate from T1 to T2")
     khung = st.empty()
 
     def draw_frame(p):
@@ -1339,14 +1341,14 @@ with tab_time_lapse:
             ax.scatter([x], [y], s=260, color=C_VAR, alpha=.18, lw=0)             # quầng sáng
             ax.scatter([x], [y], s=60, color=C_VAR, edgecolors="white", lw=.8, zorder=5)
             ax.text(x, y + R * 1.2, c["id"], color=C_VAR, ha="center", fontsize=8)
-        nhan = "Dữ liệu quan sát" if p in (0, 100) else "NỘI SUY – không phải ảnh thật"
+        nhan = "Observed data" if p in (0, 100) else "INTERPOLATED – not a real image"
         ax.set_title(f"{p}%  ·  {nhan}", color=C_HIT if p in (0, 100) else C_VAR, fontsize=10, pad=8)
         ax.set_xlabel("x (pixel)"); ax.set_ylabel("y (pixel)")
         fig.tight_layout()
         return fig
 
     if not movers:
-        st.info("Chưa có vật thể di chuyển nào để nội suy. Hạ ngưỡng σ hoặc tăng bán kính ghép cặp ở thanh bên.")
+        st.info("No moving object to interpolate yet. Lower the σ threshold or increase the pairing radius in the sidebar.")
     else:
         if play:
             for p in range(0, 101, 4):
@@ -1358,35 +1360,35 @@ with tab_time_lapse:
         khung.pyplot(f)
         plt.close(f)
         if tien_do in (0, 100) and not play:
-            st.info("✅ Đang hiển thị vị trí quan sát gốc.")
+            st.info("✅ Showing the original observed positions.")
 
 # ---- TAB 3 ------------------------------------------------------------------
 with tab_du_lieu:
-    st.subheader("Bảng ứng viên (RA/Dec)")
+    st.subheader("Candidate table (RA/Dec)")
     if dang_mock:
-        st.caption("RA/Dec tính từ một WCS giả định cho dữ liệu mock (không ứng với bầu trời thật); "
-                   f"vận tốc góc tính với Δt = {fmt_dt(dt_hours)}.")
+        st.caption("RA/Dec are derived from an assumed WCS for the mock data (not real sky positions); "
+                   f"the angular rate assumes Δt = {fmt_dt(dt_hours)}.")
     else:
-        nguon_toa_do = "WCS của ảnh T1" if wcs is not None else "WCS giả định (file thiếu WCS, chỉ tin cột pixel)"
-        st.caption(f"RA/Dec tính từ {nguon_toa_do}; vận tốc góc = Δθ / Δt với Δt = {fmt_dt(dt_hours)}.")
+        nguon_toa_do = "the T1 image WCS" if wcs is not None else "an assumed WCS (file has no WCS; trust the pixel columns only)"
+        st.caption(f"RA/Dec are derived from {nguon_toa_do}; angular rate = Δθ / Δt with Δt = {fmt_dt(dt_hours)}.")
         if dt_la_gia_dinh:
-            st.warning(f"Header FITS không có mốc thời gian (MJD-OBS / DATE-OBS) nên Δt = {DT_FALLBACK_H} giờ là "
-                       "giá trị GIẢ ĐỊNH. Cột vận tốc góc vì thế chỉ mang tính minh họa, không phải số đo.")
+            st.warning(f"The FITS headers carry no timestamp (MJD-OBS / DATE-OBS), so Δt = {DT_FALLBACK_H} h is an "
+                       "ASSUMED value. The angular-rate column is therefore illustrative only, not a measurement.")
 
     if dung_simbad and co_toa_do_that:
-        thong_ke = (f"**SIMBAD** (bán kính {SIMBAD_RADIUS:g}″, {min(len(movers) + len(don_le), SIMBAD_TOP)} ứng viên "
-                    f"được tra): **{n_khop}** khớp danh mục · **{n_la}** vật thể lạ chưa định danh")
+        thong_ke = (f"**SIMBAD** ({SIMBAD_RADIUS:g}″ radius, {min(len(movers) + len(don_le), SIMBAD_TOP)} candidates "
+                    f"queried): **{n_khop}** matched to the catalog · **{n_la}** unidentified objects")
         if n_offline:
-            st.warning(thong_ke + f" · **{n_offline}** không tra được do lỗi kết nối SIMBAD.")
+            st.warning(thong_ke + f" · **{n_offline}** could not be queried due to a SIMBAD connection error.")
         elif any(c["simbad"] == SIMBAD_NO_LIB for c in cands):
-            st.warning("Chưa cài `astroquery` nên không đối chiếu được SIMBAD. Chạy `pip install astroquery`.")
+            st.warning("`astroquery` is not installed, so the SIMBAD cross-match is unavailable. Run `pip install astroquery`.")
         else:
             st.info(thong_ke)
-        st.caption("SIMBAD không chứa tiểu hành tinh và sao chổi, và không đầy đủ với sao mờ. "
-                   "\"Chưa định danh\" nghĩa là không có thiên thể SIMBAD trong bán kính tìm kiếm, "
-                   "chưa phải bằng chứng về một vật thể mới.")
+        st.caption("SIMBAD does not include asteroids or comets and is incomplete for faint stars. "
+                   "\"Unidentified\" means no SIMBAD object lies within the search radius; "
+                   "it is not evidence of a new object.")
     elif dung_simbad:
-        st.caption("Không đối chiếu SIMBAD: tọa độ của dữ liệu này không ứng với bầu trời thật.")
+        st.caption("SIMBAD cross-match skipped: the coordinates of this dataset are not real sky positions.")
 
     def lam_tron(v, n):
         return None if v is None else round(v, n)
@@ -1396,35 +1398,33 @@ with tab_du_lieu:
         x = c["x2"] if not np.isnan(c["x2"]) else c["x1"]
         y = c["y2"] if not np.isnan(c["y2"]) else c["y1"]
         rows.append({
-            "Mã ứng viên": c["id"], "Định danh thiên văn (SIMBAD)": c["simbad"], "Phân loại": c["loai"],
-            "RA1 (độ)": lam_tron(c["ra1"], 5), "Dec1 (độ)": lam_tron(c["dec1"], 5),
-            "RA2 (độ)": lam_tron(c["ra2"], 5), "Dec2 (độ)": lam_tron(c["dec2"], 5),
+            "Candidate ID": c["id"], "Astronomical identification (SIMBAD)": c["simbad"], "Classification": c["loai"],
+            "RA1 (deg)": lam_tron(c["ra1"], 5), "Dec1 (deg)": lam_tron(c["dec1"], 5),
+            "RA2 (deg)": lam_tron(c["ra2"], 5), "Dec2 (deg)": lam_tron(c["dec2"], 5),
             "x (px)": round(x, 2), "y (px)": round(y, 2),
-            "Δθ (arcsec)": lam_tron(c["sep"], 1), "PA (độ)": lam_tron(c["pa"], 1),
-            "Vận tốc góc (arcsec/giờ)": lam_tron(c["vel"], 3),
-            "Δ Độ sáng (%)": None if np.isnan(c["dflux"]) else round(c["dflux"], 1),
-            "Độ tin cậy (σ)": round(c["snr"], 1),
+            "Δθ (arcsec)": lam_tron(c["sep"], 1), "PA (deg)": lam_tron(c["pa"], 1),
+            "Angular rate (arcsec/hr)": lam_tron(c["vel"], 3),
+            "Δ Flux (%)": None if np.isnan(c["dflux"]) else round(c["dflux"], 1),
+            "Significance (σ)": round(c["snr"], 1),
         })
     df = pd.DataFrame(rows)
 
     if df.empty:
-        st.info("Không có ứng viên nào ở ngưỡng hiện tại.")
+        st.info("No candidates at the current threshold.")
     else:
         try:
             st.dataframe(df, hide_index=True, width="stretch")
         except Exception:  # Streamlit bản cũ
             st.dataframe(df, hide_index=True, use_container_width=True)
 
-    st.download_button("📥 Tải file CSV", data=df.to_csv(index=False).encode("utf-8-sig"),
+    st.download_button("📥 Download CSV", data=df.to_csv(index=False).encode("utf-8-sig"),
                        file_name="candidates.csv", mime="text/csv", disabled=df.empty)
 st.divider()
-st.caption("Dữ liệu khoa học: NASA / JPL-Caltech SPHEREx Mission & NASA/IPAC Infrared Science Archive (IRSA) · Đối chiếu danh mục: CDS SIMBAD.")
+st.caption("Science data: NASA / JPL-Caltech SPHEREx Mission & NASA/IPAC Infrared Science Archive (IRSA) · Catalog cross-match: CDS SIMBAD.")
 
 st.divider()
 st.caption(
-    """Ấn phẩm này sử dụng dữ liệu từ Kính viễn vọng Quang phổ Kế hoạch Khám phá Lịch sử Vũ trụ, Kỷ nguyên Tái ion hóa và Băng (SPHEREx), một dự án hợp tác giữa Phòng thí nghiệm Phản lực (Jet Propulsion Laboratory) và Viện Công nghệ California (Caltech), và được tài trợ bởi Cơ quan Hàng không và Vũ trụ Quốc gia (NASA).
+    """This publication makes use of data products from the Spectro-Photometer for the History of the Universe, Epoch of Reionization and Ices Explorer (SPHEREx), which is a joint project of the Jet Propulsion Laboratory and the California Institute of Technology, and is funded by the National Aeronautics and Space Administration.
 
-This publication makes use of data products from the Spectro-Photometer for the History of the Universe, Epoch of Reionization and Ices Explorer (SPHEREx), which is a joint project of the Jet Propulsion Laboratory and the California Institute of Technology, and is funded by the National Aeronautics and Space Administration.
-
-Kho lưu trữ: NASA/IPAC Infrared Science Archive (IRSA)  Đối chiếu danh mục: CDS SIMBAD."""
+Archive: NASA/IPAC Infrared Science Archive (IRSA) · Catalog cross-match: CDS SIMBAD."""
 )
