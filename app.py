@@ -197,9 +197,9 @@ if not st.session_state.tutorial_done:
     col1, col2, col3 = st.columns(3)
     with col1:
         st.info(
-            "**1. Nạp Dữ Liệu**\n\n"
-            "Truy xuất trực tiếp từ kho dữ liệu NASA qua tọa độ, hoặc tải lên ảnh .FITS thủ công để khảo sát."
-        )
+        "**1. Nạp Dữ Liệu**\n\n"
+        "Sử dụng bộ dữ liệu quan sát SPHEREx thật khai thác từ kho lưu trữ NASA/IRSA, hoặc tải lên ảnh .FITS thủ công để khảo sát."
+    )
     with col2:
         st.warning(
             "**2. Đồng Bộ & Lọc Nhiễu**\n\n"
